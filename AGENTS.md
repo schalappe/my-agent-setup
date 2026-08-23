@@ -19,6 +19,11 @@ Be extremely concise. Include boundaries, assumptions, tradeoffs, plans, and ver
 - Comment are a great way to clarify functionality and how code is used. Don't comment every line, but feel free to describe (concisely) how functions, classes, etc are used.
 - Keep comments up to date ! When making changes, it is important to keep things in sync.
 
+## Questions are read-only
+
+- A question is a request for an answer, not for changes. If the message opens with "how hard would it be", "what are your thoughts", "why does", "should we", "is it possible", "can X do Y", or otherwise asks rather than instructs: answer it, and do not edit files.
+- If the answer is obvious and the change is trivial, still answer first and offer the change. Ask before making it.
+
 ## Preferred Tools
 
 Use these installed tools unless the repository requires otherwise:
