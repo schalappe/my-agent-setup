@@ -11,7 +11,8 @@
  * Timeout: $MCP_TIMEOUT seconds (default 60).
  */
 
-import { existsSync, readFileSync } from "fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
 import { dirname, join } from "path";
 
 interface ServerCfg {
@@ -130,12 +131,33 @@ async function request_(method: string, params: unknown, rpc: (m: string, p?: un
   return rpc(method, params);
 }
 
+const IMAGE_EXTENSIONS: Record<string, string> = {
+  "image/avif": "avif",
+  "image/bmp": "bmp",
+  "image/gif": "gif",
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/svg+xml": "svg",
+  "image/webp": "webp",
+};
+
 function printContent(result: any) {
+  let imageDirectory: string | undefined;
+  let imageIndex = 0;
+
   if (result.isError) console.error("tool returned an error:");
   for (const block of result.content ?? []) {
-    if (block.type === "text") console.log(block.text);
-    else if (block.type === "image") console.log(`[image ${block.mimeType}, ${(block.data?.length ?? 0)} b64 chars]`);
-    else console.log(JSON.stringify(block, null, 2));
+    if (block.type === "text") {
+      console.log(block.text);
+    } else if (block.type === "image" && typeof block.data === "string") {
+      imageDirectory ??= mkdtempSync(join(tmpdir(), "pi-mcp-images-"));
+      const extension = IMAGE_EXTENSIONS[block.mimeType] ?? "bin";
+      const path = join(imageDirectory, `image-${++imageIndex}.${extension}`);
+      writeFileSync(path, Buffer.from(block.data, "base64"));
+      console.log(`[image ${block.mimeType}] ${path}`);
+    } else {
+      console.log(JSON.stringify(block, null, 2));
+    }
   }
   if (result.structuredContent) console.log(JSON.stringify(result.structuredContent, null, 2));
   if (result.isError) process.exit(1);
