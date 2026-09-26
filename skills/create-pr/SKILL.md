@@ -67,4 +67,4 @@ Only include `Closes #123` or `Refs #123` when an issue was provided and the dif
 
 The PR URL, then on the next line:
 
-`Next: /model @loop` then `/loop 5 --until '~/.omp/agent/skills/review-round/gate.sh' /skill:review-round`
+`Next: /model @loop` then `/loop 5 --until '~/.omp/agent/skills/review-round/gate.ts' /skill:review-round`
