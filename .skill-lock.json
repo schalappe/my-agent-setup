@@ -10,15 +10,6 @@
       "installedAt": "2026-02-28T14:27:50.261Z",
       "updatedAt": "2026-07-19T09:01:41.257Z"
     },
-    "caveman-commit": {
-      "source": "schalappe/agentic-setup",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/schalappe/agentic-setup.git",
-      "skillPath": "skills/caveman-commit/SKILL.md",
-      "skillFolderHash": "7562fbbaf6e68434b4d0cda24885ea8a312a3002",
-      "installedAt": "2026-04-18T20:37:12.810Z",
-      "updatedAt": "2026-07-01T16:50:42.117Z"
-    },
     "thermo-nuclear-code-quality-review": {
       "source": "cursor/plugins",
       "sourceType": "github",
@@ -27,33 +18,6 @@
       "skillFolderHash": "d9c8935dd560b3b6f5941247d04a1843f8c7cc35",
       "installedAt": "2026-06-14T13:13:29.994Z",
       "updatedAt": "2026-06-14T13:13:29.994Z"
-    },
-    "agent-ready-issue": {
-      "source": "schalappe/agentic-setup",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/schalappe/agentic-setup.git",
-      "skillPath": "skills/agent-ready-issue/SKILL.md",
-      "skillFolderHash": "541b84687747d42f8f997a0d2fee41a5c07b022d",
-      "installedAt": "2026-07-01T16:50:42.113Z",
-      "updatedAt": "2026-07-01T16:50:42.113Z"
-    },
-    "caveman-comments": {
-      "source": "schalappe/agentic-setup",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/schalappe/agentic-setup.git",
-      "skillPath": "skills/caveman-comments/SKILL.md",
-      "skillFolderHash": "470688f7d879f3ef5a7d37c8745d42cdbab20e69",
-      "installedAt": "2026-07-01T16:50:42.116Z",
-      "updatedAt": "2026-07-01T16:50:42.116Z"
-    },
-    "writing-adrs": {
-      "source": "schalappe/agentic-setup",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/schalappe/agentic-setup.git",
-      "skillPath": "skills/writing-adrs/SKILL.md",
-      "skillFolderHash": "80af0535394c0c1e3b776bc8b7caf7d088e16562",
-      "installedAt": "2026-07-01T16:50:42.118Z",
-      "updatedAt": "2026-07-01T16:50:42.118Z"
     },
     "code-review": {
       "source": "mattpocock/skills",
@@ -195,9 +159,9 @@
       "sourceType": "github",
       "sourceUrl": "https://github.com/cursor/plugins.git",
       "skillPath": "pstack/skills/unslop/SKILL.md",
-      "skillFolderHash": "e19dcc9c531f4609df38bc86c62cf0e8b6d8f444",
+      "skillFolderHash": "d5baa969e71c4ddb563412b0ec170fa3b05b6d6e",
       "installedAt": "2026-08-23T11:20:17.047Z",
-      "updatedAt": "2026-09-08T11:07:48.301Z"
+      "updatedAt": "2026-09-26T10:30:52.698Z"
     },
     "tdd": {
       "source": "mattpocock/skills",
