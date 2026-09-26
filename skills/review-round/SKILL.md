@@ -1,6 +1,6 @@
 ---
 name: review-round
-description: Run one verify → review → fix round on the current branch's pull request and record the result. Designed to be repeated by `/loop N --until gate.sh`. Use when the user asks to review-loop, auto-review, or run a review round on a PR.
+description: Run one verify → review → fix round on the current branch's pull request and record the result. Designed to be repeated by `/loop N --until gate.ts`. Use when the user asks to review-loop, auto-review, or run a review round on a PR.
 ---
 
 # Review round
@@ -10,10 +10,10 @@ One round of the review loop for the PR attached to the current branch. Every ro
 Run it with:
 
 ```
-/loop 5 --until '~/.omp/agent/skills/review-round/gate.sh' /skill:review-round
+/loop 5 --until '~/.omp/agent/skills/review-round/gate.ts' /skill:review-round
 ```
 
-`gate.sh` stops the loop when a round is `converged` (two or more rounds with green checks and the latest found no major issue) or `stalled` (major findings stopped decreasing). Hitting the count means `capped`. `pr-guide` marks the PR ready only on `converged`.
+`gate.ts` stops the loop when a round is `converged` (two or more rounds with green checks and the latest found no major issue) or `stalled` (a critical/major finding of the latest green round repeats one from an earlier green round). "Same defect" is judged by TypeSafe Jev, since fixes shift lines and titles get reworded; the gate needs `TYPESAFE_API_KEY` and fails (disabling `/loop`) without it. Hitting the count means `capped`. `pr-guide` marks the PR ready only on `converged`.
 
 ## Resolve context
 
@@ -77,7 +77,7 @@ Dispatch `task` with the diff, the PR body, and the critical/major findings. Con
   "verify": "green",
   "verified": ["bun test", "bun run lint", "POST /orders with valid body creates the row and returns 201"],
   "findings": 4,
-  "major": 2,
+  "majors": [{"file": "src/x.ts", "line": 12, "title": "…", "why": "…"}, {"file": "src/z.ts", "line": 7, "title": "…", "why": "…"}],
   "fixed": 1,
   "rejected": [{"file": "src/x.ts", "line": 12, "title": "…", "reason": "…"}],
   "minor": [{"file": "src/y.ts", "line": 40, "title": "…"}],
@@ -85,7 +85,7 @@ Dispatch `task` with the diff, the PR body, and the critical/major findings. Con
 }
 ```
 
-`major` counts critical + major. `verified` lists the checks and scenarios that passed (empty when red). When `verify` is `red`: `findings: 0, major: 0, fixed: <fixes applied to pass checks>, rejected: [], minor: []`. `commit` is `null` when nothing was committed.
+`majors` lists every critical and major finding exactly as the reviewer reported it (fixed or rejected alike); the gate compares these across rounds. `verified` lists the checks and scenarios that passed (empty when red). When `verify` is `red`: `findings: 0, majors: [], fixed: <fixes applied to pass checks>, rejected: [], minor: []`. `commit` is `null` when nothing was committed.
 
 3. Print exactly one line and stop:
 

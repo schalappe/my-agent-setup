@@ -27,7 +27,7 @@ Read the whole diff. When the diff alone does not explain a choice, read the sur
 - **change map** — one row per meaningful file or group: what changed (not line by line), lines added and removed.
 - **flow** — one mermaid diagram (`sequenceDiagram` or `flowchart`) only when runtime flow, data flow, or state transitions changed. Otherwise none.
 - **decisions** — choices in the diff that had alternatives: choice, alternative, why. Omit when there were none worth naming.
-- **review report** — from the round files: per round checks/findings/major/fixed/rejected; each rejected finding with its reason; minor findings left for the human.
+- **review report** — from the round files: per round checks/findings/major (length of `majors`)/fixed/rejected; each rejected finding with its reason; minor findings left for the human.
 - **check by hand** — three to six concrete things the human should verify that automation did not: behavior without tests, risky edges, UI, migrations, configuration, the rejected findings if any are debatable.
 
 ## Build the page
