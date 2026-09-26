@@ -12,10 +12,11 @@ Edit text to remove AI patterns.
 
 1. Scan for the patterns below.
 2. Rewrite. Preserve meaning, match intended tone.
+3. Check English text with `bun <skill-dir>/check.ts <file>` (`<skill-dir>` is the directory containing this SKILL.md; pipe the text on stdin when it is not in a file). It prints every sentence that still shows a pattern, as `L<line> [<rule id> <rule name> <probability>] <sentence>`: dash, emoji, and curly-quote rules are exact checks, every other rule is a TypeSafe Jev judgment. Fix real hits; keep a flagged sentence only when the rule itself allows it. Run the check once more after fixing, then stop. It needs `TYPESAFE_API_KEY`; without it, skip this step and say so.
 
 ## Patterns to detect and fix
 
-Rule numbers are stable ids that other skills cite. A removed rule leaves a gap.
+Rule numbers are stable ids that other skills cite. A removed rule leaves a gap. `check.ts` reads the rules from the `N. **Name.** definition` lines below: keep that shape.
 
 ### Content
 

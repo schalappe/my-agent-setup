@@ -154,15 +154,6 @@
       "installedAt": "2026-07-10T05:13:48.527Z",
       "updatedAt": "2026-08-23T11:02:09.229Z"
     },
-    "unslop": {
-      "source": "cursor/plugins",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/cursor/plugins.git",
-      "skillPath": "pstack/skills/unslop/SKILL.md",
-      "skillFolderHash": "d5baa969e71c4ddb563412b0ec170fa3b05b6d6e",
-      "installedAt": "2026-08-23T11:20:17.047Z",
-      "updatedAt": "2026-09-26T10:30:52.698Z"
-    },
     "tdd": {
       "source": "mattpocock/skills",
       "sourceType": "github",
