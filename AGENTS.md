@@ -41,10 +41,18 @@ Prefer purpose-built agent tools for reading, searching, and editing files when 
 
 ## Working Contract
 
-### Match ceremony to the task
+### Cost-aware delegation
 
-- Do no spawn subagent for work a single agent finishes in one pass. Delegation is for breath or adversarial review, not for ordinary tasks.
-- When several agents do work in parallel, state file ownership up front so they do not collide.
+- Main owns scope, domain decisions, integration, and final acceptance.
+- Delegate a bounded, tool-heavy phase to the cheapest capable agent when its smaller context and execution cost outweigh the handoff. One sequential worker is valid; parallelism is not required.
+- Use scout for read-only evidence, sonic for mechanical operations, task for bounded implementation, and verifier for runtime verification.
+- Keep financial, security, migration, and ambiguous cross-layer decisions with Main. Use a strong reviewer at material risk checkpoints.
+- Do trivial reads, edits, and single commands inline. Do not create a worker for every action.
+- Give each worker an exact objective, scope, known facts, allowed side effects, acceptance criteria, and required evidence. Do not copy the whole conversation.
+- Assign file ownership before parallel edits. Run shared verification only after those edits have settled.
+- Main never runs verification itself (test suites, style checks, builds, live API or browser scenarios, container rebuilds). Dispatch a `verifier` with the exact commands, scenarios, and expected evidence once edits have settled. Main evaluates returned evidence and investigates failures; it does not repeat completed verification or reread the entire transcript.
+- Escalate a demonstrated capability or reasoning failure. Preserve the evidence already gathered instead of restarting the investigation.
+- A blocked worker or a missing scenario is not successful completion.
 
 ### Clarify intent
 
