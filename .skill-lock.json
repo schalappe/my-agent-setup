@@ -195,9 +195,9 @@
       "sourceType": "github",
       "sourceUrl": "https://github.com/cursor/plugins.git",
       "skillPath": "pstack/skills/unslop/SKILL.md",
-      "skillFolderHash": "6161508c5c7959b156ff0e4e10b510863b51f9cc",
+      "skillFolderHash": "e19dcc9c531f4609df38bc86c62cf0e8b6d8f444",
       "installedAt": "2026-08-23T11:20:17.047Z",
-      "updatedAt": "2026-08-23T11:20:17.047Z"
+      "updatedAt": "2026-09-08T11:07:48.301Z"
     },
     "tdd": {
       "source": "mattpocock/skills",
@@ -208,6 +208,25 @@
       "pluginName": "mattpocock-skills",
       "installedAt": "2026-08-23T11:42:03.008Z",
       "updatedAt": "2026-08-23T11:42:03.008Z"
+    },
+    "frontend-design": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/anthropics/skills.git",
+      "skillPath": "skills/frontend-design/SKILL.md",
+      "skillFolderHash": "d79e2a5bb4df4a386c2adcdd9ab8709bba28c3f6",
+      "pluginName": "example-skills",
+      "installedAt": "2026-09-08T11:08:27.975Z",
+      "updatedAt": "2026-09-08T11:08:27.975Z"
+    },
+    "typesafe-ai": {
+      "source": "typesafe-ai/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/typesafe-ai/skills.git",
+      "skillPath": "skills/typesafe-ai/SKILL.md",
+      "skillFolderHash": "678c375b883794bf4292715a43acbba5c84681aa",
+      "installedAt": "2026-09-21T14:12:00.739Z",
+      "updatedAt": "2026-09-21T14:12:00.739Z"
     }
   },
   "dismissed": {
