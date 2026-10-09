@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 // Gate for `/loop N --until '~/.omp/agent/skills/review-round/gate.ts' /skill:review-round`.
-// Reads $GIT_DIR/review/round-*.json written by the review-round skill.
-// Exit 0 = stop the loop (writes converged|stalled to $GIT_DIR/review/status).
+// Reads $GIT_DIR/review/<branch>/round-*.json written by the review-round skill (one folder per branch,
+// so an old PR's state never leaks into a new one).
+// Exit 0 = stop the loop (writes converged|stalled to $GIT_DIR/review/<branch>/status; nothing else may write it).
 // Exit 1 = run another round. Exit 2 = broken gate (bad round file, TypeSafe error); /loop disables itself.
 //
 // converged: ≥2 green rounds and the latest found no critical/major finding.
@@ -9,19 +10,21 @@
 //   (the fix failed, or the fixer rejected it and the reviewer reported it again). "Same defect" is a
 //   TypeSafe Jev judgment: fixes shift lines and the reviewer rewords titles, so file/line/title
 //   matching misses repeats. Needs TYPESAFE_API_KEY.
-// Red rounds never count as passes; they always continue.
+// Red and blocked rounds never count as passes; they always continue.
 
 import { existsSync } from "node:fs";
 import { $ } from "bun";
 
 type Finding = { file: string; line: number; title: string; why: string };
-type Round = { verify: "green" | "red"; majors: Finding[] };
+type Round = { verify: "green" | "red" | "blocked"; majors: Finding[] };
+const VERDICTS: Record<Round["verify"], true> = { green: true, red: true, blocked: true };
 
 // ponytail: 0.5 = "more likely the same defect than not"; recalibrate on real rounds if stalls look wrong.
 const SAME_DEFECT = 0.5;
 
 async function verdict(): Promise<"converged" | "stalled" | undefined> {
-  const dir = `${(await $`git rev-parse --git-dir`.text()).trim()}/review`;
+  const gitDir = (await $`git rev-parse --git-dir`.text()).trim();
+  const dir = `${gitDir}/review/${(await $`git branch --show-current`.text()).trim()}`;
   if (!existsSync(dir)) return undefined; // no round recorded yet
   const names = [...new Bun.Glob("round-*.json").scanSync(dir)].sort((a, b) =>
     a.localeCompare(b, undefined, { numeric: true }),
@@ -30,10 +33,15 @@ async function verdict(): Promise<"converged" | "stalled" | undefined> {
   if (
     !rounds.every(
       (round): round is Round =>
-        typeof round === "object" && round !== null && "verify" in round && "majors" in round && Array.isArray(round.majors),
+        typeof round === "object" &&
+        round !== null &&
+        "verify" in round &&
+        Object.hasOwn(VERDICTS, round.verify as string) &&
+        "majors" in round &&
+        Array.isArray(round.majors),
     )
   )
-    throw new Error(`${dir}: a round file lacks "verify" or the "majors" array`);
+    throw new Error(`${dir}: a round file lacks "verify" (green|red|blocked) or the "majors" array`);
 
   const green = rounds.filter((round) => round.verify === "green");
   const latest = green.at(-1);
