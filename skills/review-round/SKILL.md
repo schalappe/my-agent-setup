@@ -5,7 +5,7 @@ description: Run one verify → review → fix round on the current branch's pul
 
 # Review round
 
-One round of the review loop for the PR attached to the current branch. Every round is self-contained: no memory of previous rounds except what is on disk under `$(git rev-parse --git-dir)/review/`. Never run more than one round per invocation; the loop does the repetition.
+One round of the review loop for the PR attached to the current branch. Every round is self-contained: no memory of previous rounds except what is on disk under `$(git rev-parse --git-dir)/review/<branch>/`. Never run more than one round per invocation; the loop does the repetition.
 
 Run it with:
 
@@ -13,14 +13,16 @@ Run it with:
 /loop 5 --until '~/.omp/agent/skills/review-round/gate.ts' /skill:review-round
 ```
 
-`gate.ts` stops the loop when a round is `converged` (two or more rounds with green checks and the latest found no major issue) or `stalled` (a critical/major finding of the latest green round repeats one from an earlier green round). "Same defect" is judged by TypeSafe Jev, since fixes shift lines and titles get reworded; the gate needs `TYPESAFE_API_KEY` and fails (disabling `/loop`) without it. Hitting the count means `capped`. `pr-guide` marks the PR ready only on `converged`.
+`gate.ts` stops the loop when a round is `converged` (two or more rounds with green checks and the latest found no major issue) or `stalled` (a critical/major finding of the latest green round repeats one from an earlier green round). Red and blocked rounds never count. "Same defect" is judged by TypeSafe Jev, since fixes shift lines and titles get reworded; the gate needs `TYPESAFE_API_KEY` and fails (disabling `/loop`) without it. Hitting the count means `capped`. `pr-guide` marks the PR ready only on `converged`.
+
+The loop is finished only when `gate.ts` exits 0. Never write `$dir/status` yourself and never declare the loop done from a round's result. Running rounds without `/loop` (the user asked in plain words to loop until no issue): run `bun ~/.omp/agent/skills/review-round/gate.ts` after each round and start another round while it exits 1.
 
 ## Resolve context
 
 - Branch: `git branch --show-current`
 - PR of the current branch: `gh pr view --json number,baseRefName,body`
   - No PR → stop and say exactly: `No PR for branch <branch>; run /skill:create-pr first.`
-- State: `dir=$(git rev-parse --git-dir)/review`; `mkdir -p "$dir"`
+- State: `dir=$(git rev-parse --git-dir)/review/$(git branch --show-current)`; `mkdir -p "$dir"` (one folder per branch, the same path `gate.ts` reads)
   - `$dir/status` exists → stop and say exactly: `Review loop already finished (<status>); rm -r <dir> to restart.`
   - Round number `N` = count of `$dir/round-*.json` + 1
 - Base: `git fetch origin <base>`; `merge_base=$(git merge-base origin/<base> HEAD)`
@@ -37,10 +39,11 @@ Green means two things passed: the repo's checks and a live exercise of what the
    - CLI or library: run the real command or a throwaway script on the changed path and assert output.
    Skip the exercise only when nothing in the diff changes what executes (docs, comments, tests only). Config, env, migrations, feature flags, and build settings do change what executes: exercise them. State the reason for any skip in the round file.
 
-Dispatch `verifier` once with the exact check commands and the scenarios (expected outcome per scenario). It reports pass/fail/blocked with evidence. A blocked scenario is not green.
+Dispatch `verifier` once with the exact check commands and the scenarios (expected outcome per scenario). It reports pass/fail/blocked with evidence.
 
 - Red: dispatch `task` to fix only what the failing checks or scenarios require, then dispatch `verifier` once more. Record the final result. Do not review this round: reviewing code that fails its own checks wastes a pass. Go to step 4.
-- Green: continue.
+- Blocked (any scenario could not run, everything else passed): unblock it with the repo's documented local setup (nearest `AGENTS.md`), then dispatch `verifier` once more. Still blocked → record `verify: "blocked"` with each blocked scenario and its reason in `blocked`, skip review, go to step 4. A blocked scenario is never green.
+- Green: every check and every scenario passed. Continue.
 
 ## 2. Review
 
@@ -85,7 +88,7 @@ Dispatch `task` with the diff, the PR body, and the critical/major findings. Con
 }
 ```
 
-`majors` lists every critical and major finding exactly as the reviewer reported it (fixed or rejected alike); the gate compares these across rounds. `verified` lists the checks and scenarios that passed (empty when red). When `verify` is `red`: `findings: 0, majors: [], fixed: <fixes applied to pass checks>, rejected: [], minor: []`. `commit` is `null` when nothing was committed.
+`majors` lists every critical and major finding exactly as the reviewer reported it (fixed or rejected alike); the gate compares these across rounds. `verified` lists the checks and scenarios that passed (empty when red). `blocked` lists `{"scenario","reason"}` for a blocked round and is omitted otherwise. When `verify` is `red` or `blocked`: `findings: 0, majors: [], fixed: <fixes applied to pass checks>, rejected: [], minor: []`. `commit` is `null` when nothing was committed.
 
 3. Print exactly one line and stop:
 
