@@ -222,6 +222,15 @@
       "pluginName": "mattpocock-skills",
       "installedAt": "2026-10-06T21:35:33.088Z",
       "updatedAt": "2026-10-06T21:35:33.088Z"
+    },
+    "logging-best-practices": {
+      "source": "boristane/agent-skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/boristane/agent-skills.git",
+      "skillPath": "skills/logging-best-practices/SKILL.md",
+      "skillFolderHash": "075c83b8bf75e6f7b7ac97b8cf752f819da7cdb7",
+      "installedAt": "2026-10-09T20:04:31.326Z",
+      "updatedAt": "2026-10-09T20:04:31.326Z"
     }
   },
   "dismissed": {
