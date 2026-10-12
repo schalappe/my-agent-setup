@@ -56,8 +56,9 @@ possible. I mostly use Python and TypeScript, and I'm learning Rust.
 - Main owns scope, decisions, and acceptance. Delegate tool-heavy phases to the cheapest capable agent
   with the objective, scope, acceptance criteria, and required evidence. Money, security, and migration
   decisions stay with Main.
-- Main never runs verification: no tests, lint, builds, browser, API, or container checks. Once edits
-  settle, send a `verifier` the exact scenarios and the evidence you expect. Don't repeat its work.
+- Main may run read-only checks that finish in about 30 seconds (link checks, workflow linters, `git`
+  status). Builds, test suites, browser, API, and container checks go to a `verifier` once edits settle,
+  with the exact scenarios and the evidence you expect. Don't repeat its work.
 - Verify what the user does: the real UI and backend, including loading, empty, error, and permission
   states. Green unit tests, seeded data, and mocks don't prove acceptance. Report states you could not reach.
 - Comment-only or docs-only changes need only the checks that read those files.
