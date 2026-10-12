@@ -33,6 +33,8 @@ Communication to and from subagents should be sparse. Communicate primarily thro
    - gets the worktree's absolute path in its task and uses absolute paths under it for every file tool (read, edit, write, grep). File tools resolve relative paths against the main checkout, not the shell's cwd, so a relative edit lands in the wrong tree;
    - installs dependencies in the worktree before its first commit (the repo's frozen install, e.g. `bun install --frozen-lockfile`): git hooks run from the worktree and fail without its `node_modules`.
 
+   The absolute-path rule alone has not stopped stray edits, so check mechanically. Before step 3, record `git -C <main-checkout> status --porcelain` as the user's baseline. After every implementer or merger wave, run it again: any entry not in the baseline is a stray edit. Stop the wave, move that change into the worktree that owns it, and restore the main checkout's file before continuing.
+
 5. Once an **implementer subagent** completes, merge its work to the integration branch with a **merger subagent**.
 
 6. If this changes the **frontier** of available tickets, kick off more **implementer subagents** to work on the new tickets. This allows for maximum concurrency.
