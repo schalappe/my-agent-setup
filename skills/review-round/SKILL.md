@@ -7,6 +7,14 @@ description: Run one verify → review → fix round on the current branch's pul
 
 One round of the review loop for the PR attached to the current branch. Every round is self-contained: no memory of previous rounds except what is on disk under `$(git rev-parse --git-common-dir)/review/<branch>/` (shared by every worktree, so it survives disposable ones). Never run more than one round per invocation; the loop does the repetition.
 
+## Preflight (once, before the loop)
+
+Resolve branch, PR, and worktree once before starting `/loop`, not every round:
+
+- Branch: `git branch --show-current`.
+- PR: `gh pr view <branch> --json number`. No PR → do not start the loop; say `No PR for branch <branch>; run /skill:create-pr first.` A missing PR never fixes itself between rounds, so retrying it each round only burns the count.
+- Worktree: `git worktree list --porcelain`. The branch is checked out in another worktree → do not start the loop here; print the command to launch it there: `cd <worktree-path>` followed by the same `/loop` command.
+
 Run it with:
 
 ```

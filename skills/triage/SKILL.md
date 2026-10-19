@@ -73,10 +73,12 @@ Show counts and a one-line summary per item. Let the maintainer pick.
 
 3. **Verify the claim.** Before any grilling, check that the claim holds up. For a bug, reproduce it from the reporter's steps. For a PR, confirm the diff does what it claims: check it out, run the relevant tests or commands. Report what happened: confirmed (with code path), failed, or insufficient detail (a strong `needs-info` signal). A confirmed verification makes a much stronger agent brief.
 
+   A `verifier` brief for this sets a setup deadline (report the blocker when it passes) and asks for a progress report before starting another long wait.
+
 4. **Grill (if needed).** If the request needs fleshing out, call the Skill tool twice, for "grilling" and "domain-modeling", and grill it into shape a round of questions at a time, sharpening domain terms and updating `GLOSSARY.md`/ADRs inline as decisions land.
 
 5. **Apply the outcome:**
-   - `ready-for-agent`: post an agent brief comment ([AGENT-BRIEF.md](AGENT-BRIEF.md)).
+   - `ready-for-agent`: post an agent brief comment ([AGENT-BRIEF.md](AGENT-BRIEF.md)). Each behavior claim in the brief states its evidence type: static (read in code), mocked (test with doubles), or live (observed on a running system). Mocks never prove persistence behavior.
    - `ready-for-human`: same structure as an agent brief, but note why it can't be delegated (judgment calls, external access, design decisions, manual testing).
    - `needs-info`: post triage notes (template below).
    - For `wontfix`, close the issue, with the comment depending on *why*:
