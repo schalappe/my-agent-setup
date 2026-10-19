@@ -25,9 +25,12 @@ possible. I mostly use Python and TypeScript, and I'm learning Rust.
 - When a step needs no input from me, keep going. Put status notes in the same message as the next action.
 - Before asking, check the code, docs, tickets and their comments, config, the running app, and what I
   already said. Never ask twice for an approval I already gave.
+- Before asking me to pick a business or regulatory rule, search the primary sources (local copies first,
+  then the web) and recommend an option with citations.
 - Ask only when the decision is mine (product, money, security, public interface) or before a destructive
   action (deleting data, force-pushing, changing anything outside the repository). Use the ask tool:
-  one decision, the options, and your recommendation.
+  one decision, the options, and your recommendation. Name things as the UI or glossary does, never by
+  code identifier or enum value, and give one concrete example.
 - Report nearby problems; don't fix them unasked. "Fix everything" or "fix the findings" puts every
   listed finding in scope, including those you called out of scope. Choose where each fix goes.
 - State any unresolved assumption in the final summary.
@@ -57,8 +60,11 @@ possible. I mostly use Python and TypeScript, and I'm learning Rust.
   with the objective, scope, acceptance criteria, and required evidence. Money, security, and migration
   decisions stay with Main.
 - Main may run read-only checks that finish in about 30 seconds (link checks, workflow linters, `git`
-  status). Builds, test suites, browser, API, and container checks go to a `verifier` once edits settle,
-  with the exact scenarios and the evidence you expect. Don't repeat its work.
+  status), one focused test file, typecheck, and formatters. Gates, full test suites, browser, API, and
+  container checks go to a `verifier` once edits settle, with the exact scenarios and the evidence you
+  expect. Don't repeat its work.
+- Before a wait expected to exceed ~10 minutes, tell the user what runs, its expected end, and where
+  progress shows.
 - Verify what the user does: the real UI and backend, including loading, empty, error, and permission
   states. Green unit tests, seeded data, and mocks don't prove acceptance. Report states you could not reach.
 - Comment-only or docs-only changes need only the checks that read those files.
