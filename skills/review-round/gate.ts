@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Gate for `/loop N --until '~/.omp/agent/skills/review-round/gate.ts' /skill:review-round`.
+// Gate for the review-round skill, run after each round: `bun ~/.agents/skills/review-round/gate.ts`.
 // `gate.ts tree` prints the working-tree hash (tracked + untracked, ignoring .gitignore'd files) that
 // verify and round files are keyed on; the skill and the verifier use it so all three agree on the hash.
 //
@@ -8,7 +8,7 @@
 // derived here from verify-N.json, never taken from the round file.
 // Exit 0 = stop the loop (writes "converged|stalled <tree>" to status; nothing else may write it).
 // Exit 1 = run another round. Exit 2 = broken gate (bad or missing file, verify tree differs from the
-// round's tree, TypeSafe error); /loop disables itself.
+// round's tree, TypeSafe error); the skill stops the loop.
 //
 // converged: ≥2 green rounds, the latest is the last round, found no critical/major finding, and its
 //   tree is the current tree.
