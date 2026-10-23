@@ -205,7 +205,39 @@ no `code`:
 | --- | --- |
 | legacy `get`/`create`/`remove`/`start`/`stop pod`, `create`/`remove pods`, `get cloud` | `Error: <msg>` on stderr, exit 1 — including the missing-key case, which carries the same message as `no_credentials` but no JSON and no `code`. Success prints a human **table** on stdout, not JSON |
 | `exec` (hidden, deprecated) | **v2.10.0+:** joined the JSON error shape — flat JSON with a `code` on stderr and a **non-zero** exit. Through v2.9.0 it printed the error as plaintext and still exited **0**, so a caller that trusted the exit code saw a silent success. Either way: progress on **stdout**, and it polls up to **5 minutes** for the pod's SSH info before giving up |
-| `project` (hidden) | prints errors to **stdout** and exits **0** — the last surface where the exit code cannot be trusted |
+| `project` (hidden) | **Released versions through v3.0.1:** runtime errors print to **stdout** and exit **0**; inspect the output. **Builds containing unreleased [runpod/runpodctl#382](https://github.com/runpod/runpodctl/pull/382):** plain-text Runpod SDK notice on **stderr**, empty stdout, exit **1**; treat the notice as fatal and do not retry |
+
+#### Project Runpod SDK notice
+
+Use the [Runpod SDK](https://github.com/runpod/runpod-python) for serverless
+development regardless of CLI version.
+
+**Build scope:** the notice contract applies to builds containing
+[runpod/runpodctl#382](https://github.com/runpod/runpodctl/pull/382), which is
+unreleased. The latest published release is **v3.0.1**. Check `runpodctl version`;
+released versions through v3.0.1 print `project` runtime errors to **stdout** and
+exit **0**, so a zero exit status does not establish success. For source or custom
+builds, verify the build's commit before assuming the notice contract: their
+version string can match a released version, including v3.0.1.
+
+In builds containing #382, `runpodctl project ...` invocations reach the hidden
+catch-all, including `new`, `start`, `deploy`, `build`, the `create`/`dev` aliases, unknown
+subcommands and flags. Supported help forms include `runpodctl project --help`,
+`runpodctl project deploy --help`, `runpodctl help project`,
+`runpodctl help project deploy`, `runpodctl -h project`,
+`runpodctl --help project` and `runpodctl --help project deploy`.
+Each exits **1** with empty stdout and exactly this plain-text stderr, including
+the final newline:
+
+```text
+The "project" command has been removed.
+
+Use the Runpod SDK for serverless development workflows:
+  https://github.com/runpod/runpod-python
+```
+
+Surface the notice verbatim without requiring a JSON `code`, and treat the failure
+as fatal. Use the [Runpod SDK](https://github.com/runpod/runpod-python) for serverless development.
 
 ### Parsing `ssh info`
 
@@ -220,10 +252,10 @@ no `code`:
 So: check the exit code, then check for an `error` key even on stdout.
 
 "Not ready" fires whenever the pod has no **public port 22**, which is not the same thing
-as "still booting". A pod whose image never starts an sshd reports not-ready indefinitely —
-verified by creating a `ubuntu:22.04` CPU pod and polling for ~70 s at `status: RUNNING`
-throughout. So **bound any SSH readiness loop** and don't treat `RUNNING` as "SSH is
-coming"; if it never arrives, the image is the problem, not the wait.
+as "still booting". A `ubuntu:22.04` CPU pod created through the earlier v1 path stayed at
+`status: RUNNING` without SSH for ~70 s; that path could not request Runpod-managed SSH.
+The current API v2 CPU create path requests managed SSH when SSH is enabled. So **bound
+any SSH readiness loop** and don't treat `RUNNING` alone as proof that SSH is ready.
 
 Two v2.9.0 changes make this easier to get right: `pod create --wait` does the bounded
 readiness loop for you (and proves an ssh *banner*, not just a published port), and
@@ -233,8 +265,10 @@ longer returns an `ssh_command` at all (it used to hand back one built from stal
 ports that could never connect), and it drops out of `ssh connect`'s `connections` list,
 which is now `[]` rather than `null` when nothing is reachable.
 
-So a parser should tolerate a non-JSON line on stderr from those, and must not rely on
-the exit code for `project` (nor for `exec` before v2.10.0). Prefer the non-legacy
+So a parser should tolerate a non-JSON line on stderr from those. Treat the
+`project` SDK notice's exit 1 as fatal in builds containing #382. For released
+versions through v3.0.1, inspect `project` stdout even on exit 0; `exec` before
+v2.10.0 also requires checking its output. Prefer the non-legacy
 equivalents: `pod get`/`pod create`/`pod delete`, and `ssh info <pod-id>` + your own `ssh`
 invocation instead of `exec`.
 

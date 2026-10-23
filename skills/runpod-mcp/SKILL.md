@@ -14,7 +14,7 @@ allowed-tools: Bash(claude mcp:*)
 compatibility: Linux, macOS, Windows
 metadata:
   author: runpod
-  version: "1.7.4" # x-release-please-version
+  version: "1.8.0" # x-release-please-version
   concepts: [runpod-platform, pod, serverless-endpoint, job, template, network-volume, registry-credential, gpu-type, log-stream, api-key, api-rate-limit, hub-repo]
 license: Apache-2.0
 ---
@@ -82,11 +82,6 @@ Once connected, read the server. Do not reason about its tools from memory.
    guides are the same text for an agent without the plugin.
 3. **The wire contract** is the Runpod v2 OpenAPI document at
    `https://api.runpod.io/v2/openapi.json`, for fields beyond the tool surface.
-
-One protocol quirk worth knowing, because it looks like a bug: delete tools can return
-`isError: true` with "Unexpected end of JSON input" **even on success**, since the REST
-API answers 204 No Content. Confirm with a follow-up `get-`/`list-` (a deleted resource
-then 404s) rather than retrying the delete.
 
 For concepts (pods vs serverless, GPU selection, storage), read `../runpod-usage/`.
 
