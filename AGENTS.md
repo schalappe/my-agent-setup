@@ -1,6 +1,6 @@
 # Global agent context
 
-I'm schalappe. French is my first language, English my second. I build complex things as simply as
+I'm schalappe. French is my first language, English my second. Speak to me in french. I build complex things as simply as
 possible. I mostly use Python and TypeScript, and I'm learning Rust.
 
 ## Talking to me
@@ -31,8 +31,14 @@ possible. I mostly use Python and TypeScript, and I'm learning Rust.
   action (deleting data, force-pushing, changing anything outside the repository). Use the ask tool:
   one decision, the options, and your recommendation. Name things as the UI or glossary does, never by
   code identifier or enum value, and give one concrete example.
-- Report nearby problems; don't fix them unasked. "Fix everything" or "fix the findings" puts every
-  listed finding in scope, including those you called out of scope. Choose where each fix goes.
+- Fix small problems you find while working (a bug, a failing check, a wrong comment, a broken
+  link, dead code) when the fix is local, clearly correct, and verifiable in this session. List
+  each one in the final summary.
+- Never answer a found problem with "later" or "follow-up". If the fix needs a redesign, a
+  migration, a change to a cross-project contract, or a product, money, or security decision,
+  tell me and draft an issue instead.
+- "Fix everything" or "fix the findings" puts every listed finding in scope, including those you
+  called out of scope. Choose where each fix goes.
 - State any unresolved assumption in the final summary.
 
 ## Design
@@ -69,7 +75,8 @@ possible. I mostly use Python and TypeScript, and I'm learning Rust.
   states. Green unit tests, seeded data, and mocks don't prove acceptance. Report states you could not reach.
 - Comment-only or docs-only changes need only the checks that read those files.
 - Before saying done: every acceptance criterion has evidence, every current advisor note is fixed or
-  rejected with a reason, and the temporary servers and worktrees you started are gone.
+  rejected with a reason, and the temporary servers you started are stopped.
+- Once a branch is pushed, remove the worktree you created for it.
 - Never report success when verification is red, skipped, or not run.
 
 ## Shipping
@@ -78,7 +85,8 @@ possible. I mostly use Python and TypeScript, and I'm learning Rust.
   Conventional Commits. Never include changes you didn't make: they may be my parallel work.
 - A requested PR is a real GitHub PR. Follow my draft or ready choice over skill defaults.
 - When closing an issue, comment what changed and how it was verified.
-- In a review, separate blockers from optional follow-ups and end with a merge verdict.
+- In a review, fix or list every defect; a deferred item needs a reason (redesign, decision, or
+  contract change) and a drafted issue. End with a merge verdict.
 
 ## Tools
 
