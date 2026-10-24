@@ -1,24 +1,6 @@
 {
   "version": 3,
   "skills": {
-    "find-skills": {
-      "source": "vercel-labs/skills",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/vercel-labs/skills.git",
-      "skillPath": "skills/find-skills/SKILL.md",
-      "skillFolderHash": "76a98a285cb0434f3d39e1a873823556330e398b",
-      "installedAt": "2026-02-28T14:27:50.261Z",
-      "updatedAt": "2026-07-19T09:01:41.257Z"
-    },
-    "thermo-nuclear-code-quality-review": {
-      "source": "cursor/plugins",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/cursor/plugins.git",
-      "skillPath": "cursor-team-kit/skills/thermo-nuclear-code-quality-review/SKILL.md",
-      "skillFolderHash": "d9c8935dd560b3b6f5941247d04a1843f8c7cc35",
-      "installedAt": "2026-06-14T13:13:29.994Z",
-      "updatedAt": "2026-06-14T13:13:29.994Z"
-    },
     "codebase-design": {
       "source": "mattpocock/skills",
       "sourceType": "github",
@@ -100,15 +82,6 @@
       "installedAt": "2026-07-10T05:13:48.523Z",
       "updatedAt": "2026-10-12T16:10:19.490Z"
     },
-    "teach": {
-      "source": "mattpocock/skills",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/mattpocock/skills.git",
-      "skillPath": "skills/productivity/teach/SKILL.md",
-      "skillFolderHash": "3fd617b610e59acbb99644de1ef37e394ff53cd1",
-      "installedAt": "2026-07-10T05:13:48.524Z",
-      "updatedAt": "2026-10-12T16:10:21.241Z"
-    },
     "to-spec": {
       "source": "mattpocock/skills",
       "sourceType": "github",
@@ -145,25 +118,6 @@
       "installedAt": "2026-07-10T05:13:48.527Z",
       "updatedAt": "2026-10-12T16:10:24.532Z"
     },
-    "frontend-design": {
-      "source": "anthropics/skills",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/anthropics/skills.git",
-      "skillPath": "skills/frontend-design/SKILL.md",
-      "skillFolderHash": "d79e2a5bb4df4a386c2adcdd9ab8709bba28c3f6",
-      "pluginName": "example-skills",
-      "installedAt": "2026-09-08T11:08:27.975Z",
-      "updatedAt": "2026-09-08T11:08:27.975Z"
-    },
-    "typesafe-ai": {
-      "source": "typesafe-ai/skills",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/typesafe-ai/skills.git",
-      "skillPath": "skills/typesafe-ai/SKILL.md",
-      "skillFolderHash": "678c375b883794bf4292715a43acbba5c84681aa",
-      "installedAt": "2026-09-21T14:12:00.739Z",
-      "updatedAt": "2026-09-21T14:12:00.739Z"
-    },
     "pr": {
       "source": "mattpocock/skills",
       "sourceType": "github",
@@ -183,150 +137,6 @@
       "pluginName": "mattpocock-skills",
       "installedAt": "2026-10-06T21:35:33.088Z",
       "updatedAt": "2026-10-06T21:35:33.088Z"
-    },
-    "logging-best-practices": {
-      "source": "boristane/agent-skills",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/boristane/agent-skills.git",
-      "skillPath": "skills/logging-best-practices/SKILL.md",
-      "skillFolderHash": "075c83b8bf75e6f7b7ac97b8cf752f819da7cdb7",
-      "installedAt": "2026-10-09T20:04:31.326Z",
-      "updatedAt": "2026-10-09T20:04:31.326Z"
-    },
-    "companion-clis": {
-      "source": "runpod/runpod-plugins-official",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/runpod/runpod-plugins-official.git",
-      "skillPath": "plugins/runpod/skills/companion-clis/SKILL.md",
-      "skillFolderHash": "f0a9d5448c9695dc07293a50f0021f135c0ee053",
-      "installedAt": "2026-10-18T15:10:59.178Z",
-      "updatedAt": "2026-10-23T03:10:33.250Z"
-    },
-    "cost-audit": {
-      "source": "runpod/runpod-plugins-official",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/runpod/runpod-plugins-official.git",
-      "skillPath": "plugins/runpod/skills/cost-audit/SKILL.md",
-      "skillFolderHash": "fc72283eb89f46ee10e667c7848a13e225ec4f85",
-      "installedAt": "2026-10-18T15:10:59.180Z",
-      "updatedAt": "2026-10-23T03:10:34.954Z"
-    },
-    "discovery": {
-      "source": "runpod/runpod-plugins-official",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/runpod/runpod-plugins-official.git",
-      "skillPath": "plugins/runpod/skills/discovery/SKILL.md",
-      "skillFolderHash": "e800884b0715b68c6f2fbaf68b18fa23527dbb61",
-      "installedAt": "2026-10-18T15:10:59.180Z",
-      "updatedAt": "2026-10-23T03:10:36.766Z"
-    },
-    "endpoint-ops": {
-      "source": "runpod/runpod-plugins-official",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/runpod/runpod-plugins-official.git",
-      "skillPath": "plugins/runpod/skills/endpoint-ops/SKILL.md",
-      "skillFolderHash": "716beae9ae2330f102d11ff0f7afc7a496742f5b",
-      "installedAt": "2026-10-18T15:10:59.180Z",
-      "updatedAt": "2026-10-23T03:10:38.538Z"
-    },
-    "flash": {
-      "source": "runpod/runpod-plugins-official",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/runpod/runpod-plugins-official.git",
-      "skillPath": "plugins/runpod/skills/flash/SKILL.md",
-      "skillFolderHash": "cc4bd10bbc8d2063aa70a1b0640250f9f030669f",
-      "installedAt": "2026-10-18T15:10:59.181Z",
-      "updatedAt": "2026-10-23T03:10:41.266Z"
-    },
-    "lifecycle-crud": {
-      "source": "runpod/runpod-plugins-official",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/runpod/runpod-plugins-official.git",
-      "skillPath": "plugins/runpod/skills/lifecycle-crud/SKILL.md",
-      "skillFolderHash": "bb7d518eaf5eb930080d32046de965edfa60e7db",
-      "installedAt": "2026-10-18T15:10:59.181Z",
-      "updatedAt": "2026-10-23T03:10:44.077Z"
-    },
-    "pod-deploy": {
-      "source": "runpod/runpod-plugins-official",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/runpod/runpod-plugins-official.git",
-      "skillPath": "plugins/runpod/skills/pod-deploy/SKILL.md",
-      "skillFolderHash": "0bbdabf62949a6a87a8644a0edf793c2decd3173",
-      "installedAt": "2026-10-18T15:10:59.181Z",
-      "updatedAt": "2026-10-23T03:10:45.629Z"
-    },
-    "pod-doctor": {
-      "source": "runpod/runpod-plugins-official",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/runpod/runpod-plugins-official.git",
-      "skillPath": "plugins/runpod/skills/pod-doctor/SKILL.md",
-      "skillFolderHash": "6e1b79ba0a5da161ad78267f694369956ef3a089",
-      "installedAt": "2026-10-18T15:10:59.181Z",
-      "updatedAt": "2026-10-23T03:10:47.467Z"
-    },
-    "runpod": {
-      "source": "runpod/runpod-plugins-official",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/runpod/runpod-plugins-official.git",
-      "skillPath": "plugins/runpod/skills/runpod/SKILL.md",
-      "skillFolderHash": "4102e41a3da77021e851fc0459950e7aad79c5d6",
-      "installedAt": "2026-10-18T15:10:59.182Z",
-      "updatedAt": "2026-10-23T03:10:49.581Z"
-    },
-    "runpod-mcp": {
-      "source": "runpod/runpod-plugins-official",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/runpod/runpod-plugins-official.git",
-      "skillPath": "plugins/runpod/skills/runpod-mcp/SKILL.md",
-      "skillFolderHash": "05653cd30ef0707e19c0bf35bfc798e70c381d41",
-      "installedAt": "2026-10-18T15:10:59.182Z",
-      "updatedAt": "2026-10-23T03:10:51.169Z"
-    },
-    "runpod-migrate": {
-      "source": "runpod/runpod-plugins-official",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/runpod/runpod-plugins-official.git",
-      "skillPath": "plugins/runpod/skills/runpod-migrate/SKILL.md",
-      "skillFolderHash": "6ad8f7d43e68bc84e53c2b2f7a1514b40961e9d7",
-      "installedAt": "2026-10-18T15:10:59.182Z",
-      "updatedAt": "2026-10-23T03:10:53.442Z"
-    },
-    "runpod-templates": {
-      "source": "runpod/runpod-plugins-official",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/runpod/runpod-plugins-official.git",
-      "skillPath": "plugins/runpod/skills/runpod-templates/SKILL.md",
-      "skillFolderHash": "f4611b9616acb562294713345fe8c3b4e208c2a8",
-      "installedAt": "2026-10-18T15:10:59.182Z",
-      "updatedAt": "2026-10-23T03:10:56.891Z"
-    },
-    "runpod-usage": {
-      "source": "runpod/runpod-plugins-official",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/runpod/runpod-plugins-official.git",
-      "skillPath": "plugins/runpod/skills/runpod-usage/SKILL.md",
-      "skillFolderHash": "78dd00466a3a9bafdb43e035b2e853c025898d28",
-      "installedAt": "2026-10-18T15:10:59.183Z",
-      "updatedAt": "2026-10-23T03:10:58.926Z"
-    },
-    "runpodctl": {
-      "source": "runpod/runpod-plugins-official",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/runpod/runpod-plugins-official.git",
-      "skillPath": "plugins/runpod/skills/runpodctl/SKILL.md",
-      "skillFolderHash": "e13a9937eb18662be020a4dd82620cf0ac8a9f08",
-      "installedAt": "2026-10-18T15:10:59.183Z",
-      "updatedAt": "2026-10-23T03:11:00.732Z"
-    },
-    "serverless-deploy": {
-      "source": "runpod/runpod-plugins-official",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/runpod/runpod-plugins-official.git",
-      "skillPath": "plugins/runpod/skills/serverless-deploy/SKILL.md",
-      "skillFolderHash": "a77cda22f20bd5e060327698a7200a19841549fc",
-      "installedAt": "2026-10-18T15:10:59.183Z",
-      "updatedAt": "2026-10-23T03:11:02.389Z"
     },
     "writing-for-agents": {
       "source": "mattpocock/skills",
