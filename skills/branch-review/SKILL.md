@@ -11,7 +11,7 @@ Three-axis review of the diff between `HEAD` and a fixed point the user supplies
 
 The axes run as **parallel sub-agents** so they don't pollute each other's context, then this skill aggregates their findings.
 
-The issue tracker should have been provided to you. If not, tell the user to run `/setup-matt-pocock-skills`.
+The issue tracker should have been provided to you. If not, tell the user to run `/setup-repo`.
 
 ## Process
 
@@ -64,6 +64,8 @@ Each smell reads *what it is* → *how to fix*; match it against the diff:
 
 Issue the three sub-agent calls together, in the foreground, and aggregate the reports they return.
 
+Each brief ends with: "Report a finding only after reproducing it (command and output) or citing the code that proves it (file, line, quoted lines)."
+
 **Standards sub-agent prompt** should include:
 
 - The full diff command, commit list, excluded generated paths, and gate results (with the evidence record path if any).
@@ -80,7 +82,7 @@ Issue the three sub-agent calls together, in the foreground, and aggregate the r
 
 - The diff command, commit list, excluded generated paths, and gate results (with the evidence record path if any).
 - The path or fetched contents of the spec, when there is one, so intended behaviour is not reported as a bug.
-- The brief: "Hunt for behaviour the diff gets wrong. For every changed or removed symbol, find its callers outside the diff (`git grep`) and check each still works. For every changed read or screen, check each state it can reach: loading, empty, error, refused by a business rule, forbidden. For every write, check the failure paths: validation refusal, partial success, retry, concurrent change. Report each defect with the file and line, the input or state that triggers it, and the wrong result. Zero findings is a valid result. Under 400 words."
+- The brief: "Hunt for behaviour the diff gets wrong. For every changed or removed symbol, find its callers outside the diff (`git grep`) and check each still works. For every changed read or screen, check each state it can reach: loading, empty, error, refused by a business rule, forbidden. For every write, check the failure paths: validation refusal, partial success, retry, concurrent change. For each condition the diff adds, invert it in a throwaway worktree of `HEAD` (never the shared checkout, other reviewers read it), run the focused tests there, then remove the worktree; a mutation that stays green names a missing test. For a dependency bump, check that the changelog was read, each package changes on its own, and the lockfile diff holds only the intended changes. Report each defect with the file and line, the input or state that triggers it, and the wrong result. Zero findings is a valid result. Under 400 words."
 
 If the spec is missing, skip the Spec sub-agent and note this in the final report. The Correctness sub-agent always runs.
 

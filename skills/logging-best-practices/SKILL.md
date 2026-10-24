@@ -23,6 +23,8 @@ Apply these guidelines when:
 - Designing logging strategy for new services
 - Setting up logging infrastructure
 
+Before instrumenting, write the 2-4 questions an on-call engineer will ask during an incident; every field you add should help answer one. Before calling it done, trigger each path (success, refusal, error) and read the real emitted events.
+
 ## Core Principles
 
 ### 1. Wide Events (CRITICAL)

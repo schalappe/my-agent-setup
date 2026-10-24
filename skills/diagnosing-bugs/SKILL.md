@@ -17,6 +17,8 @@ If the redacted output is not enough to diagnose the bug, say so and ask the use
 
 ## Phase 1: Build a feedback loop
 
+Before building the loop, read the error the system already reports: the backend log, stack trace, or failed response behind the user's symptom.
+
 **This is the skill.** Everything else is mechanical. If you have a **tight** pass/fail signal for the bug (one that goes red on _this_ bug), you will find the cause; bisection, hypothesis-testing, and instrumentation all just consume it. If you don't have one, no amount of staring at code will save you.
 
 Spend disproportionate effort here. **Be aggressive. Be creative. Refuse to give up.**
@@ -109,9 +111,11 @@ Tool preference:
 
 **Tag every debug log** with a unique prefix, e.g. `[DEBUG-a4f2]`. Cleanup at the end becomes a single grep. Untagged logs survive; tagged logs die.
 
-**Perf branch.** For performance regressions, logs are usually wrong. Instead: establish a baseline measurement (timing harness, `performance.now()`, profiler, query plan), then bisect. Measure first, fix second.
+**Perf branch.** For performance regressions, logs are usually wrong. Instead: establish a baseline measurement (timing harness, `performance.now()`, profiler, query plan), then bisect. Measure first, fix second. Revert a fix whose gain stays within run-to-run noise. Report every number with its run count and spread (median of 10 runs, ±4%).
 
 ## Phase 5: Fix + regression test
+
+State the root cause, and why it produces the user's symptom, before proposing any fix.
 
 Write the regression test **before the fix**, but only if there is a **correct seam** for it.
 
@@ -131,7 +135,8 @@ If a correct seam exists:
 
 Required before declaring done:
 
-- [ ] Original repro no longer reproduces (re-run the Phase 1 loop)
+- [ ] Original repro no longer reproduces (re-run the Phase 1 loop), and the user's exact scenario (their steps, data, and screen) replayed end to end passes
+- [ ] Sibling pages and endpoints that share the broken contract checked (`git grep` the same call or field), each fixed or listed
 - [ ] Regression test passes (or absence of seam is documented)
 - [ ] All `[DEBUG-...]` instrumentation removed (`grep` the prefix)
 - [ ] Throwaway prototypes deleted (or moved to a clearly-marked debug location)
