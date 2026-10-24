@@ -1,6 +1,7 @@
 ---
 description: Clean up local branches deleted from remote, including worktrees
 allowed-tools: Bash(git branch:*), Bash(git worktree:*), Bash(rg:*)
+disable-model-invocation: true
 ---
 
 # Clean Up [gone] Branches
