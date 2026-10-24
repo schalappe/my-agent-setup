@@ -11,6 +11,9 @@
 // task text lives here so the prompts are the same every round.
 // `gate.ts verify N` prints round N's verification outcome (`green`, `red`, or `blocked: <reason>`); the skill
 // acts on that line instead of judging verify-N.json itself.
+// `gate.ts ready` decides whether the PR may leave draft once the loop stops: exit 0 when the loop converged on
+// the current tree, the minor pass ran, and the latest round left no minor finding (nits stay for the human);
+// exit 1 prints why not.
 // A round whose files.txt lists a non-test UI file (tsx, jsx, vue, svelte, css, scss, html, or a .ts/.js file in
 // a package that depends on a UI framework) is green only
 // with a passing scenario whose `surface` is "browser": unit tests and API calls never prove a screen.
@@ -185,14 +188,16 @@ async function readVerify(dir: string, round: string): Promise<Outcome & { verif
   return { ...verifyResult(verify, await changesUi(`${dir}/round-${round}/files.txt`)), verify };
 }
 
+function roundNames(dir: string): string[] {
+  return [...new Bun.Glob("round-*.json").scanSync(dir)].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
 async function verdict(): Promise<"converged" | "stalled" | undefined> {
   const dir = await stateDir();
   if (!existsSync(dir)) return undefined; // no round recorded yet
   const current = await tree();
 
-  const names = [...new Bun.Glob("round-*.json").scanSync(dir)].sort((a, b) =>
-    a.localeCompare(b, undefined, { numeric: true }),
-  );
+  const names = roundNames(dir);
   const rounds = await Promise.all(
     names.map(async (name) => {
       const round: unknown = await Bun.file(`${dir}/${name}`).json();
@@ -222,6 +227,19 @@ async function verdict(): Promise<"converged" | "stalled" | undefined> {
   else if (await repeatsEarlier(latest.majors, green.slice(0, -1).flatMap((round) => round.majors))) result = "stalled";
   if (result) await Bun.write(`${dir}/status`, `${result} ${current}\n`);
   return result;
+}
+
+// Returns why the PR must stay in draft, or undefined when it may be marked ready. Converged already guarantees
+// the latest round is green, has no critical/major finding, and reviewed the current tree.
+async function notReadyReason(): Promise<string | undefined> {
+  if ((await verdict()) !== "converged") return "the loop has not converged on the current code";
+  const dir = await stateDir();
+  if (!existsSync(`${dir}/minor-pass`)) return "the minor pass has not run";
+  const latestName = roundNames(dir).at(-1);
+  const latest: unknown = await Bun.file(`${dir}/${latestName}`).json();
+  if (!isObject(latest) || !Array.isArray(latest.minor)) throw new Error(`${dir}/${latestName}: lacks the "minor" array`);
+  if (latest.minor.length > 0) return `${latest.minor.length} minor finding(s) remain in ${latestName}`;
+  return undefined;
 }
 
 // One Noul per (latest, earlier) pair, all in one request.
@@ -296,6 +314,11 @@ if (import.meta.main) {
       const { result, reason } = await readVerify(await stateDir(), process.argv[3]);
       console.log(reason ? `${result}: ${reason}` : result);
       process.exit(0);
+    }
+    if (process.argv[2] === "ready") {
+      const reason = await notReadyReason();
+      console.log(reason ? `review loop: stays draft (${reason})` : "review loop: ready");
+      process.exit(reason ? 1 : 0);
     }
     const result = await verdict();
     if (!result) process.exit(1);

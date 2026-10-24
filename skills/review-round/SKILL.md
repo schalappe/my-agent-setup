@@ -24,7 +24,7 @@ Each step runs on the cheapest model that does it reliably. The orchestration (t
 
 Rounds share nothing but the files under `$(git rev-parse --git-common-dir)/review/<branch>/`, which every worktree shares, so state survives disposable ones. Re-resolve the context at the start of every round and do not carry findings over in memory.
 
-Gate: `gate=~/.agents/skills/review-round/gate.ts`. It stops the loop when the rounds are `converged` (two or more green rounds and the latest, run on the current code, found no critical or major issue) or `stalled` (a critical or major finding of the latest green round repeats one from an earlier green round). Red and blocked rounds never count. "Same defect" is judged by TypeSafe Jev, since fixes shift lines and titles get reworded, so the gate needs `TYPESAFE_API_KEY`. `pr-guide` marks the PR ready only on `converged`.
+Gate: `gate=~/.agents/skills/review-round/gate.ts`. It stops the loop when the rounds are `converged` (two or more green rounds and the latest, run on the current code, found no critical or major issue) or `stalled` (a critical or major finding of the latest green round repeats one from an earlier green round). Red and blocked rounds never count. "Same defect" is judged by TypeSafe Jev, since fixes shift lines and titles get reworded, so the gate needs `TYPESAFE_API_KEY`. Only a converged loop whose last round left no minor finding marks the PR ready ([hand over](#hand-over)).
 
 ## Preflight (once)
 
@@ -37,7 +37,7 @@ Gate: `gate=~/.agents/skills/review-round/gate.ts`. It stops the loop when the r
 
 Repeat up to `M` times: run one round (below), then `bun $gate`.
 
-- Exit 0 → print the gate's line (`review loop: converged|stalled`). On `converged`, run the [minor pass](#minor-pass) if it has not run in this loop; otherwise stop.
+- Exit 0 → print the gate's line (`review loop: converged|stalled`). On `converged`, run the [minor pass](#minor-pass) if it has not run in this loop; otherwise [hand over](#hand-over).
 - Exit 1 → start the next round.
 - Exit 2 → the gate is broken. Print its stderr and stop. Never repair state files to make it pass.
 
@@ -141,11 +141,19 @@ Round N: verify=<green|red|blocked from `bun $gate verify N`> findings=4 major=2
 
 ## Minor pass
 
-Runs once per loop, when the gate first prints `converged`. `$dir/minor-pass` exists → it already ran: stop. Owners almost always ask for the minors to be fixed in the same PR, so the loop does it before handing over.
+Runs once per loop, when the gate first prints `converged`. `$dir/minor-pass` exists → it already ran: [hand over](#hand-over). Owners almost always ask for the minors to be fixed in the same PR, so the loop does it before handing over.
 
-1. Write `$dir/minor-pass` first, so a pass that changes nothing still counts as run. Read `minor` from the latest `round-N.json`. Empty → stop.
+1. Write `$dir/minor-pass` first, so a pass that changes nothing still counts as run. Read `minor` from the latest `round-N.json`. Empty → [hand over](#hand-over).
 2. Dispatch one general-purpose agent (Sonnet, medium) with the PR body, those minor findings, and the patch paths of the files they touch. It fixes each one or rejects it with a one-sentence reason, returns `{"fixed":[titles],"rejected":[{"file","line","title","reason"}]}`, and does not commit.
-3. Nothing changed → report the rejections and stop. Otherwise commit `review: minor fixes` and push, then run one more full round (verify, review, fix, record) and `bun $gate`. That round reviews the minor fixes; its own minors go to the human.
+3. Nothing changed → report the rejections and [hand over](#hand-over). Otherwise commit `review: minor fixes` and push, then run one more full round (verify, review, fix, record) and `bun $gate`. That round reviews the minor fixes; its own minors go to the human.
 4. The gate's exit after that round decides as usual: exit 1 continues the loop within `M` plus that one extra round.
 
 Report each minor as fixed or rejected with its reason.
+
+## Hand over
+
+Runs when the loop stops after `converged`. A stalled, capped, or broken loop never gets here, so its PR stays as it is. Run `bun $gate ready`:
+
+- Exit 0 → if `gh pr view --json isDraft --jq .isDraft` prints `true`, run `gh pr ready <number>` and print `PR #<number> marked ready`.
+- Exit 1 → print the gate's line (`review loop: stays draft (<reason>)`) and leave the PR as it is.
+- Exit 2 → the gate is broken. Print its stderr.
