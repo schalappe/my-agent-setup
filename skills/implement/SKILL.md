@@ -1,24 +1,60 @@
 ---
 name: implement
-description: "Implement a piece of work based on a spec or set of tickets."
+description: "Implement one ticket, or a spec and its tickets, through implementer subagents while the main agent keeps scope, decisions, and acceptance."
 disable-model-invocation: true
 ---
 
-Implement the work described by the user in the spec or tickets.
+Implement the work the user names: one ticket, or a spec whose tickets form a **task graph** (tickets with blocking relationships, so a **frontier** of unblocked tickets is always ready). One ticket is a graph of one node. Fetch each reference from the issue tracker and state its title before starting; if a reference is ambiguous, ask. The issue tracker should have been provided to you. If not, tell the user to run `/setup-matt-pocock-skills`.
 
-If the user passes a ticket reference, fetch it from the issue tracker and state its title before starting. If the reference is ambiguous, ask.
+## The main agent is the conductor
 
-Call the Skill tool with "tdd" where possible, at pre-agreed seams.
+The main agent owns scope, decisions, and acceptance. It reads the tickets, the spec, the `AGENTS.md` of each project the work touches, and the diffs its subagents return. Exploration and code go to subagents, so the main context keeps every decision of the conversation intact.
 
-Run typechecking and single focused test files yourself, regularly. The full test suite and the repo's gates go to a `verifier` once, at the end.
+Subagents report open questions instead of guessing a product or business rule. The main agent answers from the tickets, the docs, and the conversation, asks the user with the ask tool when the decision is the user's, and resumes the subagent with `SendMessage`.
 
-Once done, call the Skill tool with "code-review" to review the work.
+At the end the main agent **harmonises**: it compares what each subagent did with what was asked and decided. Any gap is the main agent's to close, by sending the work back with the precise difference or by correcting it itself, until the result matches.
 
-Commit your work to the current branch.
+Communicate through **context pointers** (the spec, tickets, notes files, commits), not restated content.
+
+## Steps
+
+1. Read the tickets and the spec, and draw the task graph. Record `git -C <main-checkout> status --porcelain` as the user's baseline.
+
+2. (optional) Dispatch an **exploration subagent** for the files and external docs the tickets need. It saves markdown notes to a directory outside the repo that every later subagent can read, so implementers spend their context on implementation.
+
+3. Create the branch, in its own worktree:
+   - **One ticket**: a feature branch. The implementer works on it directly.
+   - **A spec**: an **integration branch**. Each implementer works on its own branch in its own worktree, and a **merger subagent** merges each finished ticket into the integration branch. If the issue tracker closes work through PRs, or the user asks for one, open a draft PR after the first merge (a branch with no commits ahead of the base can't open one), marked as closing the spec and tickets.
+
+4. Dispatch **implementer subagents**, in the background where possible, one per frontier ticket. Each one:
+   - confirms its worktree is based on the right branch before starting, and resets onto it if not;
+   - calls the Skill tool with `tdd` to build the ticket;
+   - follows the repo's review checklist (named in `AGENTS.md`, a PR template, or a standards file), so its test requirements are met before review rather than found by it;
+   - fixes defects it finds on the paths the ticket touches, and reports any that needs a product decision;
+   - on the spec shape, merges the integration branch tip into its own branch before reporting done.
+
+   Every subagent that works in a worktree (implementer, merger, fixer):
+   - gets the worktree's absolute path and uses absolute paths under it for every file tool. File tools resolve relative paths against the main checkout, not the shell's cwd, so a relative edit lands in the wrong tree;
+   - installs dependencies in the worktree before its first commit (the repo's frozen install, e.g. `bun install --frozen-lockfile`): git hooks run from the worktree and fail without its `node_modules`.
+
+   After every wave, rerun `git -C <main-checkout> status --porcelain`. Any entry not in the baseline is a stray edit: stop the wave, move that change into the worktree that owns it, and restore the main checkout's file. Shared `.git` metadata written from a worktree (refs, gate evidence) is expected.
+
+5. On the spec shape, merge each finished ticket with a merger subagent. When that changes the frontier, dispatch implementers for the new tickets.
+
+6. Call the Skill tool with `branch-review` on the branch. A finding that is doubtful, partial, or a product decision goes to the user now, through the ask tool, before final verification. Fix the rest in one implementer subagent, then review the fix commits alone with a reviewer subagent before merging them: a fix can trade one finding for a regression.
+
+7. Harmonise (see above) against the tickets, the spec, the conversation's decisions, and the review.
+
+8. Dispatch a **verifier subagent** for the full test suite and the repo's gates, once, on the final revision. Its brief sets a setup deadline and asks for a report on the first blocker instead of working around it. For runs longer than a few minutes it writes a progress file (stage, elapsed time, result counts so far); multi-hour runs use `timeout: 0`. Run scripts meant for reuse take the worktree path as an argument.
+
+9. Commit to the branch. If a draft PR exists, mark it ready for review; otherwise resolve each ticket the way the issue tracker closes work, and report the branch.
+
+10. Remove the subagent worktrees.
 
 Hand off with an acceptance table, one row per criterion: `criterion | revision | command | result counts | status`. Copy the status verbatim from the verifier: `pass`, `blocked`, `bypassed prerequisite`, or `not verified`.
 
 - Synthetic interactions (scripted events, mocks, injected state) are never reported as physical ones.
 - Baseline attribution ("not new", "also fails on develop") is `unproven` until reproduced on the base revision.
 - A required full run is satisfied only by one passing full invocation, not by pieced-together partial runs.
-- List out-of-scope defects found along the way with their tracking status: existing issue, filed, or unfiled.
+- A defect found and not fixed names why (redesign, product decision, contract change) and links its drafted issue.
+- Unresolved assumptions: none, or each one already asked through the ask tool.

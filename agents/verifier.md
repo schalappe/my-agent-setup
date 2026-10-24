@@ -25,4 +25,4 @@ Return a compact report:
 - Evidence references and relevant command exit codes
 - Untested states and blockers
 
-Close resources you created. Do not stop shared services.
+Close resources you created: record each process's PID when you start it (`$!`) and stop it by that PID. Other sessions run their own servers and Gradle daemons on this machine, so leave every process you did not start running.

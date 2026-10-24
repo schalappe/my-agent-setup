@@ -6,6 +6,9 @@
 // State: $(git common dir)/review/<branch>/, shared by every worktree of the repo so it outlives them.
 // round-N.json is written by the skill; verify-N.json by the verifier only; the round's verdict is
 // derived here from verify-N.json, never taken from the round file.
+// `gate.ts slice N` splits round N's diff into review slices of at most SLICE_LINES changed lines (a bigger single
+// file is its own slice) and writes round-N/review-<S>.prompt for each, printing the slice letters. The reviewer
+// task text lives here so the prompts are the same every round.
 // `gate.ts verify N` prints round N's verification outcome (`green`, `red`, or `blocked: <reason>`); the skill
 // acts on that line instead of judging verify-N.json itself.
 // A round whose files.txt lists a non-test UI file (tsx, jsx, vue, svelte, css, scss, html, or a .ts/.js file in
@@ -41,6 +44,12 @@ const UI_FILE = /\.(tsx|jsx|vue|svelte|css|scss|html)$/;
 const SCRIPT_FILE = /\.(ts|js|mjs)$/;
 const TEST_FILE = /(\.(test|spec)\.|(^|\/)(e2e|__tests__|tests?)\/)/;
 const UI_FRAMEWORKS = ["react", "vue", "svelte", "solid-js", "preact", "@angular/core"];
+
+const SLICE_LINES = 2000;
+
+const REVIEW_TASK = `Review your slice of this pull request diff against its stated intent. Read only the patch files listed in <slice> (open surrounding source when needed). Report only defects you can point to in those patches: wrong logic, contract violations against the intent, missing error handling at trust boundaries, security issues, data loss, missing or incorrect tests for changed behavior. If the repository's AGENTS.md names a review checklist, apply its rules to your slice. Do not report style, naming, formatting, or hypothetical future needs. Zero findings is a valid result.
+
+Severity: critical = data loss, security, or crash on the main path; major = incorrect behavior or contract violation; minor = real but low-impact defect; nit = anything else.`;
 
 // 0.5 = "more likely the same defect than not"; recalibrate on real rounds if stalls look wrong.
 const SAME_DEFECT = 0.5;
@@ -121,6 +130,49 @@ function verifyResult({ checks, scenarios }: Verify, ui: boolean): Outcome {
 async function stateDir(): Promise<string> {
   const commonDir = (await $`git rev-parse --path-format=absolute --git-common-dir`.text()).trim();
   return `${commonDir}/review/${(await $`git branch --show-current`.text()).trim()}`;
+}
+
+// Greedy packing in files.txt order keeps a directory's files together. Binary files (numstat "-") count as 0.
+export function packSlices(numstat: string, limit = SLICE_LINES): string[][] {
+  const slices: { paths: string[]; lines: number }[] = [];
+  for (const line of numstat.split("\n")) {
+    const [added, removed, path] = line.split("\t");
+    if (!path) continue;
+    const lines = (Number(added) || 0) + (Number(removed) || 0);
+    const last = slices.at(-1);
+    if (last && last.lines + lines <= limit) {
+      last.paths.push(path);
+      last.lines += lines;
+    } else slices.push({ paths: [path], lines });
+  }
+  return slices.map((slice) => slice.paths);
+}
+
+async function slice(round: string): Promise<string[]> {
+  const dir = await stateDir();
+  const roundDir = `${dir}/round-${round}`;
+  const files = await Bun.file(`${roundDir}/files.txt`).text();
+  const { result, verify } = await readVerify(dir, round);
+  if (result !== "green") throw new Error(`round ${round} is ${result}; only a green round is reviewed`);
+  const intent = (await $`gh pr view --json body --jq .body`.text()).trim();
+  const checks = [
+    ...verify.checks.map((check) => `- ${check.command}: exit ${check.exit}`),
+    ...verify.scenarios.map((scenario) => `- ${scenario.name}: ${scenario.result}`),
+  ].join("\n");
+  const names: string[] = [];
+  for (const [i, paths] of packSlices(files).entries()) {
+    const name = i < 26 ? String.fromCharCode(65 + i) : `S${i}`;
+    const patches = [];
+    for (const path of paths) {
+      const patch = `${roundDir}/patches/${path.replaceAll("/", "__")}.patch`;
+      if (!(await Bun.file(patch).exists())) throw new Error(`${patch}: missing; the skill writes one patch per file`);
+      patches.push(patch);
+    }
+    const prompt = `${REVIEW_TASK}\n\n<intent>\n${intent}\n</intent>\n<checks_passed>\n${checks}\n</checks_passed>\n<files>\n${files.trim()}\n</files>\n<slice>\n${patches.join("\n")}\n</slice>\n`;
+    await Bun.write(`${roundDir}/review-${name}.prompt`, prompt);
+    names.push(name);
+  }
+  return names;
 }
 
 async function readVerify(dir: string, round: string): Promise<Outcome & { verify: Verify }> {
@@ -227,23 +279,31 @@ async function repeatsEarlier(latest: Finding[], earlier: Finding[]): Promise<bo
   }
 }
 
-try {
-  if (process.argv[2] === "tree") {
-    console.log(await tree());
+// Guarded so `packSlices` can be imported without running the gate.
+if (import.meta.main) {
+  try {
+    if (process.argv[2] === "tree") {
+      console.log(await tree());
+      process.exit(0);
+    }
+    if (process.argv[2] === "slice") {
+      if (!/^\d+$/.test(process.argv[3] ?? "")) throw new Error("usage: gate.ts slice <round number>");
+      console.log((await slice(process.argv[3])).join(" "));
+      process.exit(0);
+    }
+    if (process.argv[2] === "verify") {
+      if (!/^\d+$/.test(process.argv[3] ?? "")) throw new Error("usage: gate.ts verify <round number>");
+      const { result, reason } = await readVerify(await stateDir(), process.argv[3]);
+      console.log(reason ? `${result}: ${reason}` : result);
+      process.exit(0);
+    }
+    const result = await verdict();
+    if (!result) process.exit(1);
+    console.log(`review loop: ${result}`);
     process.exit(0);
+  } catch (error) {
+    // Exit 1 would mean "continue": any failure must surface as a broken gate instead.
+    console.error(`review gate: ${error instanceof Error ? error.message : error}`);
+    process.exit(2);
   }
-  if (process.argv[2] === "verify") {
-    if (!/^\d+$/.test(process.argv[3] ?? "")) throw new Error("usage: gate.ts verify <round number>");
-    const { result, reason } = await readVerify(await stateDir(), process.argv[3]);
-    console.log(reason ? `${result}: ${reason}` : result);
-    process.exit(0);
-  }
-  const result = await verdict();
-  if (!result) process.exit(1);
-  console.log(`review loop: ${result}`);
-  process.exit(0);
-} catch (error) {
-  // Exit 1 would mean "continue": any failure must surface as a broken gate instead.
-  console.error(`review gate: ${error instanceof Error ? error.message : error}`);
-  process.exit(2);
 }

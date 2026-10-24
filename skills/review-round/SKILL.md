@@ -90,33 +90,21 @@ Recompute `tree`. It must equal `tree` in `verify-N.json` (the code reviewed is 
 
 Reviewers run on Fable in a separate headless `claude -p` process: a model family other than the writer's (Opus or Sonnet), a fresh context with no conversation, read-only tools, and only its slice's patches. That separation is what keeps the review from sharing the writer's blind spots. `--strict-mcp-config` and `--disable-slash-commands` keep MCP servers and skills out of its context (about 26k input tokens instead of 210k); `--json-schema` enforces the output and puts it under `structured_output`.
 
-Split `files.txt` into slices of at most ~2000 changed lines (a bigger single file is its own slice). For each slice `S`, write the task text below to `$p/review-S.prompt`, then run all slices in parallel in one background shell call from the repo root and wait for it:
+Write the prompts: `slices=$(bun $gate slice N)`. It packs `files.txt` into slices of at most 2000 changed lines (a bigger single file is its own slice), writes `$p/review-S.prompt` for each slice letter `S`, and prints the letters. Each prompt carries the reviewer task text, the PR body, the checks and scenarios that passed, the full `files.txt` for orientation, and the absolute paths of that slice's patches: never the whole diff or the conversation. Then run all slices in parallel in one background shell call from the repo root and wait for it:
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
 schema=$(cat ~/.agents/skills/review-round/reviewer-schema.json)
-claude -p --model fable --effort high --output-format json --json-schema "$schema" \
-  --tools Read,Grep,Glob --strict-mcp-config --disable-slash-commands \
-  --no-session-persistence --permission-prompts none \
-  < "$p/review-S.prompt" 2> "$p/review-S.log" | jq -e .structured_output > "$p/review-S.json" &
-# … one line per slice, then:
+for S in $slices; do
+  claude -p --model fable --effort high --output-format json --json-schema "$schema" \
+    --tools Read,Grep,Glob --strict-mcp-config --disable-slash-commands \
+    --no-session-persistence --permission-prompts none \
+    < "$p/review-$S.prompt" 2> "$p/review-$S.log" | jq -e .structured_output > "$p/review-$S.json" &
+done
 wait
 ```
 
-A slice whose `review-S.json` is missing, `null`, or not valid JSON: rerun it once. Still failing → stop the loop and show the tail of `review-S.log`. Never review a slice yourself or through a subagent: only the `claude -p` process writes `review-S.json`.
-
-Give each reviewer only the PR body, the full `files.txt` (for orientation), the absolute paths of its slice's patch files, and the checks and scenarios that passed. Never the whole diff or the conversation. Task text:
-
-```
-Review your slice of this pull request diff against its stated intent. Read only the patch files listed in <slice> (open surrounding source when needed). Report only defects you can point to in those patches: wrong logic, contract violations against the intent, missing error handling at trust boundaries, security issues, data loss, missing or incorrect tests for changed behavior. If the repository's AGENTS.md names a review checklist, apply its rules to your slice. Do not report style, naming, formatting, or hypothetical future needs. Zero findings is a valid result.
-
-Severity: critical = data loss, security, or crash on the main path; major = incorrect behavior or contract violation; minor = real but low-impact defect; nit = anything else.
-
-<intent>…PR body…</intent>
-<checks_passed>…</checks_passed>
-<files>…files.txt…</files>
-<slice>…patch file paths…</slice>
-```
+A slice whose `review-S.json` is missing, `null`, or not valid JSON: rerun it once. Still failing → stop the loop and show the tail of `review-S.log`. Never review a slice yourself or through a subagent: only the `claude -p` process writes `review-S.json`. Never edit a prompt: change the task text in `gate.ts`.
 
 ## 3. Fix
 
