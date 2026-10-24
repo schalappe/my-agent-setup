@@ -18,7 +18,7 @@ Each step runs on the cheapest model that does it reliably. The orchestration (t
 |---|---|---|
 | Verify | Sonnet, low (Haiku, low, when the round has no live exercise) | `verifier` agent, Agent tool `model` and `effort` |
 | Fix (red) | Sonnet, medium | general-purpose agent, Agent tool `model` and `effort` |
-| Review | Fable, high | `claude -p`, one process per slice |
+| Review | Fable, high | `claude -p`, two processes per slice: correctness and security |
 | Fix (findings) | Opus, high | general-purpose agent, Agent tool `model` and `effort` |
 | Same defect | TypeSafe Jev | the gate |
 
@@ -91,7 +91,11 @@ Recompute `tree`. It must equal `tree` in `verify-N.json` (the code reviewed is 
 
 Reviewers run on Fable in a separate headless `claude -p` process: a model family other than the writer's (Opus or Sonnet), a fresh context with no conversation, read-only tools, and only its slice's patches. That separation is what keeps the review from sharing the writer's blind spots. `--strict-mcp-config` and `--disable-slash-commands` keep MCP servers and skills out of its context (about 26k input tokens instead of 210k); `--json-schema` enforces the output and puts it under `structured_output`.
 
-Write the prompts: `slices=$(bun $gate slice N)`. It packs `files.txt` into slices of at most 2000 changed lines (a bigger single file is its own slice), writes `$p/review-S.prompt` for each slice letter `S`, and prints the letters. Each prompt carries the reviewer task text, the PR body, the checks and scenarios that passed, the full `files.txt` for orientation, and the absolute paths of that slice's patches: never the whole diff or the conversation. Then run all slices in parallel in one background shell call from the repo root and wait for it:
+Write the prompts: `slices=$(bun $gate slice N)`. It packs `files.txt` into slices of at most 2000 changed lines (a bigger single file is its own slice), writes two prompts per slice letter `S`, `$p/review-S.prompt` (correctness) and `$p/review-sec-S.prompt` (security, checked against the same list as the `hardening` skill), and prints their names (`A sec-A B sec-B`); the loop below runs each name as its own slice. Each prompt carries the reviewer task text, the PR body, the checks and scenarios that passed, the full `files.txt` for orientation, the findings earlier rounds rejected or recorded as pre-existing (so the reviewer does not repeat them without new evidence), and the absolute paths of that slice's patches: never the whole diff or the conversation.
+
+The first reviewed round covers every file. Later rounds are re-reviews: only the files changed since the previous reviewed round, plus the files of its rejected findings, so the loop checks its own fixes instead of finding older bugs each round. No letters printed → nothing changed since the last review: skip to step 4 with `findings: 0`.
+
+Then run all slices in parallel in one background shell call from the repo root and wait for it:
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
@@ -111,7 +115,9 @@ A slice whose `review-S.json` is missing, `null`, or not valid JSON: rerun it on
 
 Only `critical` and `major` findings are fixed by the loop; fixing minors every round is where review loops oscillate. `minor` findings are fixed once, by the [minor pass](#minor-pass) after convergence. `nit` findings are recorded for the human.
 
-Merge the slices' findings. Dispatch one general-purpose agent (Opus, high: a wrong rejection stalls the loop and a failed fix repeats) with the PR body, the critical and major findings, and the patch paths of the files they touch. For each finding it either fixes it or rejects it with a one-sentence reason (the finding is wrong, outside the diff, contradicts the PR intent, is hypothetical because no traced caller reaches that state, or is a preference with no concrete failure). A finding that hinges on a business or product rule the PR intent does not settle is rejected with a reason starting `decision:`, naming the question, its recommendation, and the evidence. It returns `{"fixed":[titles],"rejected":[{"file","line","title","reason"}]}` and does not commit.
+A finding with `pre_existing: true` is a defect the PR did not introduce, whatever its severity: the loop never fixes it and it never counts toward the gate. Append each to `$dir/pre-existing.md` (file, line, severity, title, trigger, why) unless the same file and title are already there; they reach the user at the [end](#decisions).
+
+Merge the slices' findings. Dispatch one general-purpose agent (Opus, high: a wrong rejection stalls the loop and a failed fix repeats) with the PR body, the critical and major findings, and the patch paths of the files they touch. When a finding names a pattern, the agent fixes every instance: it greps the repo for the pattern before reporting the finding fixed. For each finding it either fixes it or rejects it with a one-sentence reason (the finding is wrong, outside the diff, contradicts the PR intent, is hypothetical because no traced caller reaches that state, or is a preference with no concrete failure). A finding that hinges on a business or product rule the PR intent does not settle is rejected with a reason starting `decision:`, naming the question, its recommendation, and the evidence. It returns `{"fixed":[titles],"rejected":[{"file","line","title","reason"}]}` and does not commit.
 
 Append each `decision:` rejection to `$dir/decisions.md` and keep going: decisions reach the user once, at the [end](#decisions), never as mid-run notes.
 
@@ -126,15 +132,16 @@ Append each `decision:` rejection to `$dir/decisions.md` and keep going: decisio
   "head": "abc1234…",
   "tree": "9f3e…",
   "findings": 4,
-  "majors": [{"file": "src/x.ts", "line": 12, "title": "…", "why": "…"}, {"file": "src/z.ts", "line": 7, "title": "…", "why": "…"}],
+  "majors": [{"file": "src/x.ts", "line": 12, "title": "…", "why": "…", "trigger": "…"}, {"file": "src/z.ts", "line": 7, "title": "…", "why": "…", "trigger": "…"}],
   "fixed": 1,
   "rejected": [{"file": "src/x.ts", "line": 12, "title": "…", "reason": "…"}],
   "minor": [{"file": "src/y.ts", "line": 40, "title": "…"}],
+  "pre_existing": [{"file": "src/w.ts", "line": 3, "severity": "major", "title": "…"}],
   "commit": "abc1234"
 }
 ```
 
-`head` and `tree` are copied from `verify-N.json`: the code this round verified and reviewed (the gate exits 2 if they disagree). No `verify` field: the gate derives it from `verify-N.json`. `majors` lists every critical and major finding exactly as the reviewer reported it (fixed or rejected alike); the gate compares these across rounds. When verification was red or blocked: `findings: 0, majors: [], fixed: <fixes applied to pass checks>, rejected: [], minor: []`. `commit` is `null` when nothing was committed.
+`head` and `tree` are copied from `verify-N.json`: the code this round verified and reviewed (the gate exits 2 if they disagree). No `verify` field: the gate derives it from `verify-N.json`. `majors` lists every critical and major finding exactly as the reviewer reported it (fixed or rejected alike), pre-existing ones excepted; the gate compares these across rounds. `minor` also leaves out pre-existing findings. On a re-review round, `minor` also carries over the previous reviewed round's minors whose file was in no slice this round (one entry per file and title): those files were not re-read, so their minors still stand for the minor pass and the ready check. `pre_existing` holds the pre-existing findings, and the next rounds' prompts list them as already judged, like `rejected`. When verification was red or blocked: `findings: 0, majors: [], fixed: <fixes applied to pass checks>, rejected: [], minor: [], pre_existing: []`. `commit` is `null` when nothing was committed.
 
 3. Print one line, then run the gate:
 
@@ -164,3 +171,9 @@ Runs when the loop stops after `converged`. A stalled, capped, or broken loop ne
 ## Decisions
 
 Whenever the loop stops (converged, stalled, capped, or broken), print `$dir/decisions.md` as one list: each question with its recommendation and evidence. Missing file → print nothing.
+
+Then print `$dir/pre-existing.md`: the bugs the PR did not introduce. Draft one issue per bug with the `agent-ready-issue` skill and file none without the user's go. Missing file → print nothing.
+
+## Measure noise
+
+`bun ~/.agents/skills/review-round/noise.ts <repo>...` reads every loop recorded in those repositories and prints, per loop and in total, the rounds, the critical and major findings, how many were rejected and why, and the pre-existing count. A high rejected share means the reviewer is noisy: tune `REVIEW_TASK` in `gate.ts` before adding steps, and rerun the script on the next loops to check the change helped.

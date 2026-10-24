@@ -7,8 +7,12 @@
 // round-N.json is written by the skill; verify-N.json by the verifier only; the round's verdict is
 // derived here from verify-N.json, never taken from the round file.
 // `gate.ts slice N` splits round N's diff into review slices of at most SLICE_LINES changed lines (a bigger single
-// file is its own slice) and writes round-N/review-<S>.prompt for each, printing the slice letters. The reviewer
-// task text lives here so the prompts are the same every round.
+// file is its own slice) and writes two prompts per slice, round-N/review-<S>.prompt (correctness) and
+// review-sec-<S>.prompt (security), printing their names (`A sec-A B sec-B`). The reviewer task texts live here so
+// the prompts are the same every round. The first reviewed round covers every file; later
+// ones re-review only the files changed since the previous reviewed round plus the files of its rejected findings,
+// so the loop converges on its own fixes instead of digging up older code. No letters printed = nothing to review.
+// Every prompt lists the findings earlier rounds rejected or recorded as pre-existing, so they are not repeated.
 // `gate.ts verify N` prints round N's verification outcome (`green`, `red`, or `blocked: <reason>`); the skill
 // acts on that line instead of judging verify-N.json itself.
 // `gate.ts ready` decides whether the PR may leave draft once the loop stops: exit 0 when the loop converged on
@@ -50,7 +54,14 @@ const UI_FRAMEWORKS = ["react", "vue", "svelte", "solid-js", "preact", "@angular
 
 const SLICE_LINES = 2000;
 
-const REVIEW_TASK = `Review your slice of this pull request diff against its stated intent. Read only the patch files listed in <slice> (open surrounding source when needed). Report only defects you can point to in those patches: wrong logic, contract violations against the intent, missing error handling at trust boundaries, security issues, data loss, missing or incorrect tests for changed behavior. If the repository's AGENTS.md names a review checklist, apply its rules to your slice. Do not report style, naming, formatting, or hypothetical future needs. Zero findings is a valid result.
+// Rules every reviewer prompt shares: finding fields, re-review scope, earlier judgments, and severity.
+const FINDING_RULES = `For each finding, \`trigger\` names the input or state that makes it fail. Set \`pre_existing\` to true when the faulty code is not added or changed by the patch: the pull request did not introduce it, so it is recorded for the owner and never blocks this PR. When a defect is one instance of a pattern, report the pattern once, at its first instance, and list every other instance you find in \`why\`, so all of them get fixed in one round.
+
+<scope> says whether this is a full review or a re-review. On a re-review, the files outside your slice were reviewed in an earlier round and have not changed since: open them only to check how your slice affects them. <already_judged> lists findings earlier rounds rejected (with the reason) or recorded as pre-existing. Do not report them again unless you can show the reason is wrong, citing the code that proves it.
+
+Severity: critical = data loss, security, or crash on the main path; major = incorrect behavior or contract violation; minor = real but low-impact defect; nit = anything else.`;
+
+const REVIEW_TASK = `Review your slice of this pull request diff against its stated intent. Read only the patch files listed in <slice> (open surrounding source when needed). Report only defects you can point to in those patches: wrong logic, contract violations against the intent, missing error handling at trust boundaries, data loss, missing or incorrect tests for changed behavior. Security has its own reviewer. If the repository's AGENTS.md names a review checklist, apply its rules to your slice. Do not report style, naming, formatting, or hypothetical future needs. Zero findings is a valid result.
 
 Also interrogate: a state-changing operation that breaks when it runs twice or after a crash halfway; a guard, retry, cast, or fallback that hides a broken invariant instead of fixing its cause; a check that reads a proxy (cache, mtime, self-report) instead of the real value. For a possible null or bad input, trace the caller before reporting it.
 
@@ -58,7 +69,26 @@ Report every cheapest road to green: a threshold or config loosened; \`.skip\` a
 
 When the diff changes launch config, routes, or seed data and the repository has a \`verify-<app>\` skill, its matching recipe must change in the same PR (check <files>); otherwise report it.
 
-Severity: critical = data loss, security, or crash on the main path; major = incorrect behavior or contract violation; minor = real but low-impact defect; nit = anything else.`;
+${FINDING_RULES}`;
+
+// The security pass runs as its own reviewer on the same slices: one prompt that covers everything dilutes it.
+// The checks mirror the Verification list of the hardening skill, which governs the same code at build time.
+const SECURITY_TASK = `Review your slice of this pull request diff for security defects only. Read only the patch files listed in <slice> (open surrounding source when needed). Report a defect only when you can trace untrusted input or an unauthorized caller to the patched code; a missing control that no reachable input exercises is not a finding. Zero findings is a valid result.
+
+Check the patches against each of these:
+- Input crossing a trust boundary (request, upload, webhook, queue, third-party response, another process's arguments or files) is schema-validated at the boundary, and downstream code uses only the parsed value.
+- Every protected route or action checks authentication and per-resource authorization: the caller owns or was granted this record, not merely logged in.
+- SQL, NoSQL, and shell calls are parameterized; untrusted data never reaches eval, innerHTML, a shell, or a file path.
+- No secret in source, logs, or error bodies; required config and secrets fail at startup instead of falling back; error responses expose no internals.
+- Server-side fetches of user-influenced URLs allowlist scheme and host, reject private, loopback, and link-local addresses, and forbid redirects.
+- Deletes, moves, and overwrites on derived paths check an allowlisted root, a depth below it, and ownership on the resolved path.
+- Money-moving writes derive the idempotency key from the intent, claim it atomically, reject the same key with a different payload, and record an unknown outcome instead of retrying blindly.
+- LLM output is validated and encoded before it reaches SQL, a shell, the DOM, or a path; permissions are enforced in code, not in the prompt.
+- New or bumped dependencies: install scripts and the lockfile diff hold only the intended packages.
+
+A security defect reachable from a trust boundary is critical.
+
+${FINDING_RULES}`;
 
 // 0.5 = "more likely the same defect than not"; recalibrate on real rounds if stalls look wrong.
 const SAME_DEFECT = 0.5;
@@ -157,19 +187,76 @@ export function packSlices(numstat: string, limit = SLICE_LINES): string[][] {
   return slices.map((slice) => slice.paths);
 }
 
+type EarlierRound = { name: string; tree: string; rejected: unknown[]; preExisting: unknown[] };
+
+// The earlier rounds of this loop that a reviewer read, oldest first. A green verify is not enough: a red round
+// fixed and re-verified ends green without review, and an empty re-review writes no prompt. This gate is the only
+// writer of review prompts, so their presence marks a reviewed round.
+async function earlierReviewedRounds(dir: string, round: string): Promise<EarlierRound[]> {
+  const rounds: EarlierRound[] = [];
+  for (const name of roundNames(dir)) {
+    const number = name.slice("round-".length, -".json".length);
+    if (Number(number) >= Number(round)) continue;
+    if ([...new Bun.Glob("review-*.prompt").scanSync(`${dir}/round-${number}`)].length === 0) continue;
+    if ((await readVerify(dir, number)).result !== "green") continue;
+    const data: unknown = await Bun.file(`${dir}/${name}`).json();
+    if (!isRound(data)) throw new Error(`${dir}/${name}: lacks "head", "tree", or the "majors" array`);
+    const { rejected, pre_existing } = data as Record<string, unknown>;
+    rounds.push({
+      name,
+      tree: data.tree,
+      rejected: Array.isArray(rejected) ? rejected : [],
+      preExisting: Array.isArray(pre_existing) ? pre_existing : [],
+    });
+  }
+  return rounds;
+}
+
+// Paths a re-review keeps: changed since the previous reviewed round, or named by one of its rejected findings so the
+// reviewer can challenge the rejection. undefined = full review (first reviewed round, or its tree is gone).
+async function reReviewPaths(previous: EarlierRound | undefined, tree: string): Promise<Set<string> | undefined> {
+  if (!previous) return undefined;
+  const root = (await $`git rev-parse --show-toplevel`.text()).trim();
+  if ((await $`git cat-file -e ${`${previous.tree}^{tree}`}`.cwd(root).nothrow().quiet()).exitCode !== 0) {
+    // A full review is the safe superset; say so instead of failing the loop.
+    console.error(`tree ${previous.tree} of ${previous.name} is gone (git gc?); reviewing every file`);
+    return undefined;
+  }
+  const changed = (await $`git diff --name-only ${previous.tree} ${tree}`.cwd(root).text()).split("\n").filter(Boolean);
+  const rejectedFiles = previous.rejected.flatMap((finding) => (isObject(finding) && isString(finding.file) ? [finding.file] : []));
+  return new Set([...changed, ...rejectedFiles]);
+}
+
+function describeJudged(rounds: EarlierRound[]): string {
+  const line = (finding: unknown, label: (f: Record<string, unknown>) => string) =>
+    isObject(finding) ? [`- ${finding.file}: ${finding.title} (${label(finding)})`] : [];
+  return [
+    ...rounds.flatMap((round) => round.rejected.flatMap((finding) => line(finding, (f) => `rejected: ${f.reason}`))),
+    ...rounds.flatMap((round) => round.preExisting.flatMap((finding) => line(finding, () => "pre-existing, recorded"))),
+  ].join("\n");
+}
+
 async function slice(round: string): Promise<string[]> {
   const dir = await stateDir();
   const roundDir = `${dir}/round-${round}`;
-  const files = await Bun.file(`${roundDir}/files.txt`).text();
   const { result, verify } = await readVerify(dir, round);
   if (result !== "green") throw new Error(`round ${round} is ${result}; only a green round is reviewed`);
+  const earlier = await earlierReviewedRounds(dir, round);
+  const previous = earlier.at(-1);
+  const kept = await reReviewPaths(previous, verify.tree);
+  const files = await Bun.file(`${roundDir}/files.txt`).text();
+  const scoped = kept ? files.split("\n").filter((line) => kept.has(line.split("\t")[2] ?? "")).join("\n") : files;
+  const scope = kept
+    ? `Re-review: only files changed since ${previous?.name.slice(0, -".json".length)} or named by its rejected findings are in the slices.`
+    : "Full review: every changed file of the pull request is in the slices.";
+  const judged = describeJudged(earlier);
   const intent = (await $`gh pr view --json body --jq .body`.text()).trim();
   const checks = [
     ...verify.checks.map((check) => `- ${check.command}: exit ${check.exit}`),
     ...verify.scenarios.map((scenario) => `- ${scenario.name}: ${scenario.result}`),
   ].join("\n");
   const names: string[] = [];
-  for (const [i, paths] of packSlices(files).entries()) {
+  for (const [i, paths] of packSlices(scoped).entries()) {
     const name = i < 26 ? String.fromCharCode(65 + i) : `S${i}`;
     const patches = [];
     for (const path of paths) {
@@ -177,9 +264,10 @@ async function slice(round: string): Promise<string[]> {
       if (!(await Bun.file(patch).exists())) throw new Error(`${patch}: missing; the skill writes one patch per file`);
       patches.push(patch);
     }
-    const prompt = `${REVIEW_TASK}\n\n<intent>\n${intent}\n</intent>\n<checks_passed>\n${checks}\n</checks_passed>\n<files>\n${files.trim()}\n</files>\n<slice>\n${patches.join("\n")}\n</slice>\n`;
-    await Bun.write(`${roundDir}/review-${name}.prompt`, prompt);
-    names.push(name);
+    const context = `<intent>\n${intent}\n</intent>\n<checks_passed>\n${checks}\n</checks_passed>\n<scope>\n${scope}\n</scope>\n<already_judged>\n${judged || "none"}\n</already_judged>\n<files>\n${files.trim()}\n</files>\n<slice>\n${patches.join("\n")}\n</slice>\n`;
+    await Bun.write(`${roundDir}/review-${name}.prompt`, `${REVIEW_TASK}\n\n${context}`);
+    await Bun.write(`${roundDir}/review-sec-${name}.prompt`, `${SECURITY_TASK}\n\n${context}`);
+    names.push(name, `sec-${name}`);
   }
   return names;
 }
