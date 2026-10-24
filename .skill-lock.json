@@ -100,15 +100,6 @@
       "installedAt": "2026-07-10T05:13:48.525Z",
       "updatedAt": "2026-10-06T19:31:56.746Z"
     },
-    "triage": {
-      "source": "mattpocock/skills",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/mattpocock/skills.git",
-      "skillPath": "skills/engineering/triage/SKILL.md",
-      "skillFolderHash": "4cb951d62ecccaed601cdc5f9a1b7b3d8a799635",
-      "installedAt": "2026-07-10T05:13:48.526Z",
-      "updatedAt": "2026-10-06T19:31:58.171Z"
-    },
     "wayfinder": {
       "source": "mattpocock/skills",
       "sourceType": "github",
@@ -117,16 +108,6 @@
       "skillFolderHash": "32b0ce970b1394ede47116e1d3e07f9ccc87591f",
       "installedAt": "2026-07-10T05:13:48.527Z",
       "updatedAt": "2026-10-12T16:10:24.532Z"
-    },
-    "pr": {
-      "source": "mattpocock/skills",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/mattpocock/skills.git",
-      "skillPath": "skills/engineering/pr/SKILL.md",
-      "skillFolderHash": "00b896d811adffad747c7ca30078d909d60c7f93",
-      "pluginName": "mattpocock-skills",
-      "installedAt": "2026-10-06T21:35:33.088Z",
-      "updatedAt": "2026-10-06T21:35:33.088Z"
     },
     "retro": {
       "source": "mattpocock/skills",

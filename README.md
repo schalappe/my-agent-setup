@@ -5,7 +5,6 @@ My shared configuration for coding agents. It keeps my working preferences, reus
 ## What's here
 
 - `AGENTS.md` contains the global instructions I use across projects.
-- `AGENTS.example.md` is a template for project-specific instructions.
 - `skills/` contains reusable workflows for tasks such as debugging, code review, research, and writing ADRs.
 - `commands/` contains small agent commands.
 - `.skill-lock.json` records installed skill sources and versions.
