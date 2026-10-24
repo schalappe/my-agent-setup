@@ -4,7 +4,7 @@ description: "Implement one ticket, or a spec and its tickets, through implement
 disable-model-invocation: true
 ---
 
-Implement the work the user names: one ticket, or a spec whose tickets form a **task graph** (tickets with blocking relationships, so a **frontier** of unblocked tickets is always ready). One ticket is a graph of one node. Fetch each reference from the issue tracker and state its title before starting; if a reference is ambiguous, ask. The issue tracker should have been provided to you. If not, tell the user to run `/setup-matt-pocock-skills`.
+Implement the work the user names: one ticket, or a spec whose tickets form a **task graph** (tickets with blocking relationships, so a **frontier** of unblocked tickets is always ready). One ticket is a graph of one node. Fetch each reference from the issue tracker and state its title before starting; if a reference is ambiguous, ask. The issue tracker should have been provided to you. If not, tell the user to run `/setup-repo`.
 
 ## The main agent is the conductor
 
@@ -28,9 +28,9 @@ Communicate through **context pointers** (the spec, tickets, notes files, commit
 
 4. Dispatch **implementer subagents**, in the background where possible, one per frontier ticket. Each one:
    - confirms its worktree is based on the right branch before starting, and resets onto it if not;
-   - calls the Skill tool with `tdd` to build the ticket;
+   - calls the Skill tool with `tdd` to build the ticket, and runs the repo's typecheck after each slice;
    - follows the repo's review checklist (named in `AGENTS.md`, a PR template, or a standards file), so its test requirements are met before review rather than found by it;
-   - fixes defects it finds on the paths the ticket touches, and reports any that needs a product decision;
+   - fixes defects it finds on the paths the ticket touches, and small adjacent ones whose fix is local and verifiable, and reports any that needs a product decision;
    - on the spec shape, merges the integration branch tip into its own branch before reporting done.
 
    Every subagent that works in a worktree (implementer, merger, fixer):
@@ -43,7 +43,7 @@ Communicate through **context pointers** (the spec, tickets, notes files, commit
 
 6. Call the Skill tool with `branch-review` on the branch. A finding that is doubtful, partial, or a product decision goes to the user now, through the ask tool, before final verification. Fix the rest in one implementer subagent, then review the fix commits alone with a reviewer subagent before merging them: a fix can trade one finding for a regression.
 
-7. Harmonise (see above) against the tickets, the spec, the conversation's decisions, and the review.
+7. Harmonise (see above) against the tickets, the spec, the conversation's decisions, and the review. Fix the small adjacent findings that subagents only reported instead of handing them on.
 
 8. Dispatch a **verifier subagent** for the full test suite and the repo's gates, once, on the final revision. Its brief sets a setup deadline and asks for a report on the first blocker instead of working around it. For runs longer than a few minutes it writes a progress file (stage, elapsed time, result counts so far); multi-hour runs use `timeout: 0`. Run scripts meant for reuse take the worktree path as an argument.
 

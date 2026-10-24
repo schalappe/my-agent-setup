@@ -136,6 +136,8 @@ If a command fails with a quota error ("Monthly quota reached" or "quota exceede
 
 Do not silently fall back to training data — always tell the user why Context7 was not used.
 
+When no official source confirms a claim, prefix it with `UNVERIFIED:`. When the docs contradict the existing code, report the conflict (the doc excerpt against the file and line) with your recommendation instead of silently picking one side.
+
 ## Common Mistakes
 
 - Library IDs require a `/` prefix — `/facebook/react` not `facebook/react`
