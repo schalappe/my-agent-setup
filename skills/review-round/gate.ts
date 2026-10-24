@@ -6,6 +6,11 @@
 // State: $(git common dir)/review/<branch>/, shared by every worktree of the repo so it outlives them.
 // round-N.json is written by the skill; verify-N.json by the verifier only; the round's verdict is
 // derived here from verify-N.json, never taken from the round file.
+// `gate.ts verify N` prints round N's verification outcome (`green`, `red`, or `blocked: <reason>`); the skill
+// acts on that line instead of judging verify-N.json itself.
+// A round whose files.txt lists a non-test UI file (tsx, jsx, vue, svelte, css, scss, html, or a .ts/.js file in
+// a package that depends on a UI framework) is green only
+// with a passing scenario whose `surface` is "browser": unit tests and API calls never prove a screen.
 // Exit 0 = stop the loop (writes "converged|stalled <tree>" to status; nothing else may write it).
 // Exit 1 = run another round. Exit 2 = broken gate (bad or missing file, verify tree differs from the
 // round's tree, TypeSafe error); the skill stops the loop.
@@ -29,8 +34,13 @@ type Verify = {
   head: string;
   tree: string;
   checks: { command: string; exit: number }[];
-  scenarios: { name: string; result: "pass" | "fail" | "blocked" }[];
+  scenarios: { name: string; result: "pass" | "fail" | "blocked"; surface?: string }[];
 };
+
+const UI_FILE = /\.(tsx|jsx|vue|svelte|css|scss|html)$/;
+const SCRIPT_FILE = /\.(ts|js|mjs)$/;
+const TEST_FILE = /(\.(test|spec)\.|(^|\/)(e2e|__tests__|tests?)\/)/;
+const UI_FRAMEWORKS = ["react", "vue", "svelte", "solid-js", "preact", "@angular/core"];
 
 // 0.5 = "more likely the same defect than not"; recalibrate on real rounds if stalls look wrong.
 const SAME_DEFECT = 0.5;
@@ -72,15 +82,59 @@ function isVerify(value: unknown): value is Verify {
   );
 }
 
-function verifyResult({ checks, scenarios }: Verify): "green" | "red" | "blocked" {
-  if (checks.some((check) => check.exit !== 0) || scenarios.some((scenario) => scenario.result === "fail")) return "red";
-  if (scenarios.some((scenario) => scenario.result === "blocked")) return "blocked";
-  return "green";
+type Outcome = { result: "green" | "red" | "blocked"; reason?: string };
+
+// A plain .ts/.js file is UI code when its nearest package.json depends on a UI framework: a shared hook or
+// read-state helper changes every screen that uses it.
+async function inUiPackage(root: string, path: string): Promise<boolean> {
+  for (let dir = path.split("/").slice(0, -1); ; dir.pop()) {
+    const manifest = Bun.file(`${root}/${[...dir, "package.json"].join("/")}`);
+    if (await manifest.exists()) {
+      const { dependencies = {}, devDependencies = {} } = await manifest.json();
+      return UI_FRAMEWORKS.some((name) => name in dependencies || name in devDependencies);
+    }
+    if (dir.length === 0) return false;
+  }
+}
+
+// files.txt is `git diff --numstat`: added<TAB>removed<TAB>path.
+async function changesUi(filesTxt: string): Promise<boolean> {
+  const file = Bun.file(filesTxt);
+  if (!(await file.exists())) throw new Error(`${filesTxt}: missing; the skill writes it at the start of the round`);
+  const root = (await $`git rev-parse --show-toplevel`.text()).trim();
+  for (const path of (await file.text()).split("\n").map((line) => line.split("\t")[2] ?? "")) {
+    if (!path || TEST_FILE.test(path)) continue;
+    if (UI_FILE.test(path) || (SCRIPT_FILE.test(path) && (await inUiPackage(root, path)))) return true;
+  }
+  return false;
+}
+
+function verifyResult({ checks, scenarios }: Verify, ui: boolean): Outcome {
+  if (checks.some((check) => check.exit !== 0) || scenarios.some((scenario) => scenario.result === "fail")) return { result: "red" };
+  const blocked = scenarios.find((scenario) => scenario.result === "blocked");
+  if (blocked) return { result: "blocked", reason: `scenario blocked: ${blocked.name}` };
+  if (ui && !scenarios.some((scenario) => scenario.surface === "browser"))
+    return { result: "blocked", reason: "the diff changes UI files but no passing scenario has surface \"browser\"" };
+  return { result: "green" };
+}
+
+async function stateDir(): Promise<string> {
+  const commonDir = (await $`git rev-parse --path-format=absolute --git-common-dir`.text()).trim();
+  return `${commonDir}/review/${(await $`git branch --show-current`.text()).trim()}`;
+}
+
+async function readVerify(dir: string, round: string): Promise<Outcome & { verify: Verify }> {
+  const verifyName = `verify-${round}.json`;
+  const verifyFile = Bun.file(`${dir}/${verifyName}`);
+  if (!(await verifyFile.exists())) throw new Error(`${dir}/${verifyName}: missing; only the verifier writes it`);
+  const verify: unknown = await verifyFile.json();
+  if (!isVerify(verify))
+    throw new Error(`${dir}/${verifyName}: needs head, tree, checks [{command, exit}], scenarios [{name, result: pass|fail|blocked, surface?}]`);
+  return { ...verifyResult(verify, await changesUi(`${dir}/round-${round}/files.txt`)), verify };
 }
 
 async function verdict(): Promise<"converged" | "stalled" | undefined> {
-  const commonDir = (await $`git rev-parse --path-format=absolute --git-common-dir`.text()).trim();
-  const dir = `${commonDir}/review/${(await $`git branch --show-current`.text()).trim()}`;
+  const dir = await stateDir();
   if (!existsSync(dir)) return undefined; // no round recorded yet
   const current = await tree();
 
@@ -91,15 +145,10 @@ async function verdict(): Promise<"converged" | "stalled" | undefined> {
     names.map(async (name) => {
       const round: unknown = await Bun.file(`${dir}/${name}`).json();
       if (!isRound(round)) throw new Error(`${dir}/${name}: lacks "head", "tree", or the "majors" array`);
-      const verifyName = name.replace("round-", "verify-");
-      const verifyFile = Bun.file(`${dir}/${verifyName}`);
-      if (!(await verifyFile.exists())) throw new Error(`${dir}/${verifyName}: missing; only the verifier writes it`);
-      const verify: unknown = await verifyFile.json();
-      if (!isVerify(verify))
-        throw new Error(`${dir}/${verifyName}: needs head, tree, checks [{command, exit}], scenarios [{name, result: pass|fail|blocked}]`);
+      const { result, verify } = await readVerify(dir, name.slice("round-".length, -".json".length));
       if (verify.tree !== round.tree)
         throw new Error(`${name}: tree ${round.tree} was not the verified tree ${verify.tree}; re-verify before recording`);
-      return { ...round, verify: verifyResult(verify) };
+      return { ...round, verify: result };
     }),
   );
 
@@ -181,6 +230,12 @@ async function repeatsEarlier(latest: Finding[], earlier: Finding[]): Promise<bo
 try {
   if (process.argv[2] === "tree") {
     console.log(await tree());
+    process.exit(0);
+  }
+  if (process.argv[2] === "verify") {
+    if (!/^\d+$/.test(process.argv[3] ?? "")) throw new Error("usage: gate.ts verify <round number>");
+    const { result, reason } = await readVerify(await stateDir(), process.argv[3]);
+    console.log(reason ? `${result}: ${reason}` : result);
     process.exit(0);
   }
   const result = await verdict();

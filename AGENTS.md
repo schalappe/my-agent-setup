@@ -10,7 +10,8 @@ possible. I mostly use Python and TypeScript, and I'm learning Rust.
 - Say whether you are informing me, recommending something, or asking me to decide.
 - Keep chat short. When I ask for a document, analysis, or explanation, make it complete for its reader.
 - Separate facts from guesses. Never present a hypothesis as certain.
-- I mix French and English and make typos, so read the obvious intent. Reply in the language of my message.
+- I mix French and English and make typos, so read the obvious intent. Reply in French, including after a
+  bare slash command, unless my message itself is in English.
 - Write code, comments, commits, PRs, GitHub issues, specs, skills, and AGENTS.md in English unless the
   repository says otherwise.
 

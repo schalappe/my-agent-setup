@@ -37,11 +37,11 @@ Gate: `gate=~/.agents/skills/review-round/gate.ts`. It stops the loop when the r
 
 Repeat up to `M` times: run one round (below), then `bun $gate`.
 
-- Exit 0 → print the gate's line (`review loop: converged|stalled`) and stop.
+- Exit 0 → print the gate's line (`review loop: converged|stalled`). On `converged`, run the [minor pass](#minor-pass) if it has not run in this loop; otherwise stop.
 - Exit 1 → start the next round.
 - Exit 2 → the gate is broken. Print its stderr and stop. Never repair state files to make it pass.
 
-After `M` rounds without exit 0, print `review loop: capped after M rounds` and stop. Never write `$dir/status` or `$dir/verify-N.json` yourself, and never declare the loop done from a round's result: the gate derives each round's verdict from the verifier's file.
+The minor pass's follow-up round does not count toward `M`. After `M` rounds without exit 0, print `review loop: capped after M rounds` and stop. Never write `$dir/status` or `$dir/verify-N.json` yourself, and never declare the loop done from a round's result: the gate derives each round's verdict from the verifier's file.
 
 ## Resolve context (every round)
 
@@ -66,7 +66,7 @@ Green means the repo's checks passed and a live exercise of the change passed. T
 1. Checks: find the repo's check commands (nearest `AGENTS.md`, package scripts, `Makefile`, `justfile`, CI config). None anywhere → note `no checks defined` in the round file and rely on the live exercise alone.
 2. Live exercise: from the PR intent and the diff, write 2–5 concrete scenarios, each with an expected observable outcome:
    - API or backend: start the real service against its real dev database, send real requests, assert responses and DB state.
-   - UI: open the real page in the session's browser, perform the user actions, assert what appears or changes.
+   - UI: open the real page in the session's browser, perform the user actions, assert what appears or changes. Every diff that changes a UI file needs at least one such scenario; the gate refuses green without it.
    - CLI or library: run the real command or a throwaway script on the changed path and assert output.
    Skip the exercise only when nothing in the diff changes what executes (docs, comments, tests only). Config, env, migrations, feature flags, and build settings do change it. State the reason for any skip in the round file.
 
@@ -75,13 +75,13 @@ Reuse first: an earlier `$dir/verify-K.json` whose `tree` equals `$tree` and has
 Otherwise dispatch the `verifier` agent once (Sonnet, or Haiku when the live exercise is skipped) with the exact check commands, the scenarios with their expected outcomes, and this output contract: first record `git rev-parse HEAD` and `bun ~/.agents/skills/review-round/gate.ts tree`, then run everything and write `$dir/verify-N.json` (absolute path) with the observed exit codes. A command that did not run is not exit 0.
 
 ```json
-{"head": "abc1234…", "tree": "9f3e…", "checks": [{"command": "bun test", "exit": 0}], "scenarios": [{"name": "POST /orders with valid body returns 201 and creates the row", "result": "pass"}, {"name": "…", "result": "blocked", "reason": "dev DB unreachable"}]}
+{"head": "abc1234…", "tree": "9f3e…", "checks": [{"command": "bun test", "exit": 0}], "scenarios": [{"name": "POST /orders with valid body returns 201 and creates the row", "result": "pass", "surface": "api"}, {"name": "Deleting the last stock re-enables « Supprimer »", "result": "pass", "surface": "browser"}, {"name": "…", "result": "blocked", "reason": "dev DB unreachable"}]}
 ```
 
-`result` is `pass`, `fail`, or `blocked`. Read the file for the outcome, not the agent's summary. Green: every `exit` is 0 and every scenario is `pass`. Any failure: red. Otherwise any `blocked`: blocked.
+`result` is `pass`, `fail`, or `blocked`; `surface` is `browser`, `api`, or `cli`. The outcome is the line `bun $gate verify N` prints (`green`, `red`, or `blocked: <reason>`), never the agent's summary.
 
 - Red: dispatch one general-purpose agent (Sonnet) to fix only what the failing checks or scenarios require, then the verifier once more (it overwrites `verify-N.json`). Do not review code that fails its own checks. Go to step 4.
-- Blocked: unblock it with the repo's documented local setup (nearest `AGENTS.md`), then the verifier once more. Still blocked → skip review, go to step 4. A blocked scenario is never green.
+- Blocked: unblock it with the repo's documented local setup (nearest `AGENTS.md`), then the verifier once more. When the reason is a missing browser scenario, dispatch the verifier again with one. Still blocked → skip review, go to step 4. A blocked scenario is never green.
 - Green: continue.
 
 ## 2. Review
@@ -108,7 +108,7 @@ A slice whose `review-S.json` is missing, `null`, or not valid JSON: rerun it on
 Give each reviewer only the PR body, the full `files.txt` (for orientation), the absolute paths of its slice's patch files, and the checks and scenarios that passed. Never the whole diff or the conversation. Task text:
 
 ```
-Review your slice of this pull request diff against its stated intent. Read only the patch files listed in <slice> (open surrounding source when needed). Report only defects you can point to in those patches: wrong logic, contract violations against the intent, missing error handling at trust boundaries, security issues, data loss, missing or incorrect tests for changed behavior. Do not report style, naming, formatting, or hypothetical future needs. Zero findings is a valid result.
+Review your slice of this pull request diff against its stated intent. Read only the patch files listed in <slice> (open surrounding source when needed). Report only defects you can point to in those patches: wrong logic, contract violations against the intent, missing error handling at trust boundaries, security issues, data loss, missing or incorrect tests for changed behavior. If the repository's AGENTS.md names a review checklist, apply its rules to your slice. Do not report style, naming, formatting, or hypothetical future needs. Zero findings is a valid result.
 
 Severity: critical = data loss, security, or crash on the main path; major = incorrect behavior or contract violation; minor = real but low-impact defect; nit = anything else.
 
@@ -120,7 +120,7 @@ Severity: critical = data loss, security, or crash on the main path; major = inc
 
 ## 3. Fix
 
-Only `critical` and `major` findings are fixed by the loop. `minor` and `nit` are recorded for the human; fixing them is where review loops oscillate.
+Only `critical` and `major` findings are fixed by the loop; fixing minors every round is where review loops oscillate. `minor` findings are fixed once, by the [minor pass](#minor-pass) after convergence. `nit` findings are recorded for the human.
 
 Merge the slices' findings. Dispatch one general-purpose agent (Opus, high: a wrong rejection stalls the loop and a failed fix repeats) with the PR body, the critical and major findings, and the patch paths of the files they touch. For each finding it either fixes it or rejects it with a one-sentence reason (the finding is wrong, outside the diff, or contradicts the PR intent). It returns `{"fixed":[titles],"rejected":[{"file","line","title","reason"}]}` and does not commit.
 
@@ -148,5 +148,16 @@ Merge the slices' findings. Dispatch one general-purpose agent (Opus, high: a wr
 3. Print one line, then run the gate:
 
 ```
-Round N: verify=<green|red|blocked from verify-N.json> findings=4 major=2 fixed=1 rejected=1
+Round N: verify=<green|red|blocked from `bun $gate verify N`> findings=4 major=2 fixed=1 rejected=1
 ```
+
+## Minor pass
+
+Runs once per loop, when the gate first prints `converged`. `$dir/minor-pass` exists → it already ran: stop. Owners almost always ask for the minors to be fixed in the same PR, so the loop does it before handing over.
+
+1. Write `$dir/minor-pass` first, so a pass that changes nothing still counts as run. Read `minor` from the latest `round-N.json`. Empty → stop.
+2. Dispatch one general-purpose agent (Sonnet, medium) with the PR body, those minor findings, and the patch paths of the files they touch. It fixes each one or rejects it with a one-sentence reason, returns `{"fixed":[titles],"rejected":[{"file","line","title","reason"}]}`, and does not commit.
+3. Nothing changed → report the rejections and stop. Otherwise commit `review: minor fixes` and push, then run one more full round (verify, review, fix, record) and `bun $gate`. That round reviews the minor fixes; its own minors go to the human.
+4. The gate's exit after that round decides as usual: exit 1 continues the loop within `M` plus that one extra round.
+
+Report each minor as fixed or rejected with its reason.
