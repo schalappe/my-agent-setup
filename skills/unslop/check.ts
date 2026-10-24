@@ -7,7 +7,7 @@
 // Output: `L<line> [<rule id> <rule name> <probability>; …] <sentence>`.
 // Exit 0 = clean, 1 = flags printed, 2 = error.
 
-// ponytail: 0.5 = "more likely than not"; raise it if flags turn out noisy on real text.
+// 0.5 = "more likely than not"; raise it if flags turn out noisy on real text.
 const FLAG = 0.5;
 const CHARACTER_RULES: Record<string, RegExp> = { "13": /[—–]/, "18": /\p{Extended_Pictographic}/u, "19": /[“”‘’]/ };
 const key = Bun.env.TYPESAFE_API_KEY;
@@ -23,7 +23,7 @@ async function main(): Promise<boolean> {
   }));
   if (rules.length === 0) throw new Error("no numbered rules found in SKILL.md");
 
-  // ponytail: line-based split on ". ", "! ", "? "; hard-wrapped sentences are judged in pieces.
+  // line-based split on ". ", "! ", "? "; hard-wrapped sentences are judged in pieces.
   // YAML frontmatter is blanked (line numbers kept): it is metadata, not prose.
   const body = text.replace(/^---\n[\s\S]*?\n---\n/, (frontmatter) => "\n".repeat(frontmatter.split("\n").length - 1));
   const sentences: { line: number; text: string }[] = [];
@@ -80,7 +80,7 @@ async function main(): Promise<boolean> {
 }
 
 // Returns each Noul probability in question-key order. The state is one request's whole text:
-// ponytail: no chunking, so text past Jev's 32k-token state limit fails with a 422.
+// no chunking, so text past Jev's 32k-token state limit fails with a 422.
 async function askNouls(state: unknown, questions: Record<string, unknown>): Promise<number[]> {
   const body = JSON.stringify({ model: "jev-latest", state, questions });
   for (let attempt = 0; ; attempt++) {
