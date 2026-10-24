@@ -66,8 +66,9 @@ Green means the repo's checks passed and a live exercise of the change passed. T
 1. Checks: find the repo's check commands (nearest `AGENTS.md`, package scripts, `Makefile`, `justfile`, CI config). None anywhere → note `no checks defined` in the round file and rely on the live exercise alone.
 2. Live exercise: from the PR intent and the diff, write 2–5 concrete scenarios, each with an expected observable outcome:
    - API or backend: start the real service against its real dev database, send real requests, assert responses and DB state.
-   - UI: open the real page in the session's browser, perform the user actions, assert what appears or changes. Every diff that changes a UI file needs at least one such scenario; the gate refuses green without it.
+   - UI: open the real page in the session's browser, perform the user actions, assert what appears or changes. Every diff that changes a UI file needs at least one such scenario; the gate refuses green without it, so such a PR never leaves draft without browser evidence.
    - CLI or library: run the real command or a throwaway script on the changed path and assert output.
+   The repo has a `verify-<app>` skill (`.agents/skills/` or `.claude/skills/`) → the scenarios use its Launch and Drive recipes, and the verifier brief names its path.
    Skip the exercise only when nothing in the diff changes what executes (docs, comments, tests only). Config, env, migrations, feature flags, and build settings do change it. State the reason for any skip in the round file.
 
 Reuse first: an earlier `$dir/verify-K.json` whose `tree` equals `$tree` and has no blocked scenario already verified this exact code → `cp` it to `$dir/verify-N.json` and skip the dispatch. A different tree is never reused.
@@ -110,7 +111,9 @@ A slice whose `review-S.json` is missing, `null`, or not valid JSON: rerun it on
 
 Only `critical` and `major` findings are fixed by the loop; fixing minors every round is where review loops oscillate. `minor` findings are fixed once, by the [minor pass](#minor-pass) after convergence. `nit` findings are recorded for the human.
 
-Merge the slices' findings. Dispatch one general-purpose agent (Opus, high: a wrong rejection stalls the loop and a failed fix repeats) with the PR body, the critical and major findings, and the patch paths of the files they touch. For each finding it either fixes it or rejects it with a one-sentence reason (the finding is wrong, outside the diff, or contradicts the PR intent). It returns `{"fixed":[titles],"rejected":[{"file","line","title","reason"}]}` and does not commit.
+Merge the slices' findings. Dispatch one general-purpose agent (Opus, high: a wrong rejection stalls the loop and a failed fix repeats) with the PR body, the critical and major findings, and the patch paths of the files they touch. For each finding it either fixes it or rejects it with a one-sentence reason (the finding is wrong, outside the diff, contradicts the PR intent, is hypothetical because no traced caller reaches that state, or is a preference with no concrete failure). A finding that hinges on a business or product rule the PR intent does not settle is rejected with a reason starting `decision:`, naming the question, its recommendation, and the evidence. It returns `{"fixed":[titles],"rejected":[{"file","line","title","reason"}]}` and does not commit.
+
+Append each `decision:` rejection to `$dir/decisions.md` and keep going: decisions reach the user once, at the [end](#decisions), never as mid-run notes.
 
 ## 4. Record
 
@@ -144,7 +147,7 @@ Round N: verify=<green|red|blocked from `bun $gate verify N`> findings=4 major=2
 Runs once per loop, when the gate first prints `converged`. `$dir/minor-pass` exists → it already ran: [hand over](#hand-over). Owners almost always ask for the minors to be fixed in the same PR, so the loop does it before handing over.
 
 1. Write `$dir/minor-pass` first, so a pass that changes nothing still counts as run. Read `minor` from the latest `round-N.json`. Empty → [hand over](#hand-over).
-2. Dispatch one general-purpose agent (Sonnet, medium) with the PR body, those minor findings, and the patch paths of the files they touch. It fixes each one or rejects it with a one-sentence reason, returns `{"fixed":[titles],"rejected":[{"file","line","title","reason"}]}`, and does not commit.
+2. Dispatch one general-purpose agent (Sonnet, medium) with the PR body, those minor findings, and the patch paths of the files they touch. It fixes each one or rejects it under the [Fix](#3-fix) rules (including `decision:`), returns `{"fixed":[titles],"rejected":[{"file","line","title","reason"}]}`, and does not commit.
 3. Nothing changed → report the rejections and [hand over](#hand-over). Otherwise commit `review: minor fixes` and push, then run one more full round (verify, review, fix, record) and `bun $gate`. That round reviews the minor fixes; its own minors go to the human.
 4. The gate's exit after that round decides as usual: exit 1 continues the loop within `M` plus that one extra round.
 
@@ -157,3 +160,7 @@ Runs when the loop stops after `converged`. A stalled, capped, or broken loop ne
 - Exit 0 → if `gh pr view --json isDraft --jq .isDraft` prints `true`, run `gh pr ready <number>` and print `PR #<number> marked ready`.
 - Exit 1 → print the gate's line (`review loop: stays draft (<reason>)`) and leave the PR as it is.
 - Exit 2 → the gate is broken. Print its stderr.
+
+## Decisions
+
+Whenever the loop stops (converged, stalled, capped, or broken), print `$dir/decisions.md` as one list: each question with its recommendation and evidence. Missing file → print nothing.

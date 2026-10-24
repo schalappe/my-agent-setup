@@ -52,6 +52,12 @@ const SLICE_LINES = 2000;
 
 const REVIEW_TASK = `Review your slice of this pull request diff against its stated intent. Read only the patch files listed in <slice> (open surrounding source when needed). Report only defects you can point to in those patches: wrong logic, contract violations against the intent, missing error handling at trust boundaries, security issues, data loss, missing or incorrect tests for changed behavior. If the repository's AGENTS.md names a review checklist, apply its rules to your slice. Do not report style, naming, formatting, or hypothetical future needs. Zero findings is a valid result.
 
+Also interrogate: a state-changing operation that breaks when it runs twice or after a crash halfway; a guard, retry, cast, or fallback that hides a broken invariant instead of fixing its cause; a check that reads a proxy (cache, mtime, self-report) instead of the real value. For a possible null or bad input, trace the caller before reporting it.
+
+Report every cheapest road to green: a threshold or config loosened; \`.skip\` added, tests deleted, or assertions removed; a new \`@ts-ignore\`, \`eslint-disable\`, \`# noqa\`, \`# type: ignore\`, or coverage-ignore comment; a stub or empty catch; a new exception or allowlist entry. Tightening the bar is fine silently; loosening it is always a finding.
+
+When the diff changes launch config, routes, or seed data and the repository has a \`verify-<app>\` skill, its matching recipe must change in the same PR (check <files>); otherwise report it.
+
 Severity: critical = data loss, security, or crash on the main path; major = incorrect behavior or contract violation; minor = real but low-impact defect; nit = anything else.`;
 
 // 0.5 = "more likely the same defect than not"; recalibrate on real rounds if stalls look wrong.
