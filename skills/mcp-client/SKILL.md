@@ -6,7 +6,7 @@ compatibility: Requires bun. Only stdio MCP servers are supported.
 
 # MCP Client
 
-Drive any stdio MCP server declared in `.mcp.json` (looked up from cwd upward, or `$MCP_CONFIG`). Each invocation spawns the server, does the MCP handshake, runs one request, and exits.
+Drive any stdio MCP server declared in `.mcp.json` (looked up from cwd upward, or `$MCP_CONFIG`). Each invocation spawns the server, negotiates the protocol (MCP 2026-07-28, or the 2025-11-25 handshake for older servers), runs one request, and exits.
 
 ## Usage
 
@@ -21,7 +21,7 @@ bun run "$SKILL_DIR/mcp.ts" call <server> <tool> '<json-args>'
 Example:
 
 ```bash
-bun run ~/.pi/agent/skills/mcp-client/mcp.ts call whatsapp-readonly list_chats '{"limit": 10}'
+bun run ~/.agents/skills/mcp-client/mcp.ts call whatsapp-readonly list_chats '{"limit": 10}'
 ```
 
 ## Workflow
@@ -35,12 +35,14 @@ bun run ~/.pi/agent/skills/mcp-client/mcp.ts call whatsapp-readonly list_chats '
 Image content is decoded into a temporary directory. The command prints each saved file path so image-capable tools can read it:
 
 ```text
-[image image/png] /tmp/pi-mcp-images-XXXXXX/image-1.png
+[image image/png] /tmp/mcp-images-XXXXXX/image-1.png
 ```
 
 ## Notes
 
 - Each call restarts the server (a few seconds overhead); batch what you need per call when the tool supports it.
 - `MCP_TIMEOUT` (seconds, default 60) caps each invocation.
-- Tool errors print content to stderr and exit non-zero; server stderr is shown on timeout.
+- `MCP_PROBE_TIMEOUT` (seconds, default 10) is how long a server may stay silent on `server/discover` before it is treated as an older one.
+- A tool that needs input from the user (elicitation, `resultType: "input_required"`) fails with an error: this client declares no capabilities.
+- Tool and protocol errors print to stderr and exit non-zero; server stderr is shown on timeout.
 - Only `"type": "stdio"` servers are supported; HTTP/SSE servers are rejected.

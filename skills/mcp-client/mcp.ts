@@ -9,6 +9,8 @@
  *
  * Config resolution: $MCP_CONFIG, else .mcp.json from cwd upward.
  * Timeout: $MCP_TIMEOUT seconds (default 60).
+ * Protocol: 2026-07-28 (per-request _meta) with a fallback to the 2025-11-25 initialize handshake for
+ * servers that reject `server/discover` or stay silent for $MCP_PROBE_TIMEOUT seconds (default 10).
  */
 
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
@@ -23,6 +25,32 @@ interface ServerCfg {
 }
 
 const TIMEOUT_MS = Number(process.env.MCP_TIMEOUT ?? 60) * 1000;
+const PROBE_MS = Number(process.env.MCP_PROBE_TIMEOUT ?? 10) * 1000;
+
+const MODERN_VERSION = "2026-07-28";
+// Last revision with the initialize handshake; an older legacy server answers with its own version.
+const LEGACY_VERSION = "2025-11-25";
+const UNSUPPORTED_PROTOCOL_VERSION = -32022;
+const CLIENT_INFO = { name: "mcp-client", version: "1.1" };
+
+// 2026-07-28 has no handshake: every request carries its version and capabilities in _meta.
+const MODERN_META = {
+  "io.modelcontextprotocol/protocolVersion": MODERN_VERSION,
+  "io.modelcontextprotocol/clientInfo": CLIENT_INFO,
+  "io.modelcontextprotocol/clientCapabilities": {},
+};
+
+class RpcError extends Error {
+  constructor(
+    readonly code: number,
+    message: string,
+    readonly data?: any,
+  ) {
+    super(`${code}: ${message}`);
+  }
+}
+
+type Rpc = (method: string, params?: unknown) => Promise<any>;
 
 function fail(msg: string): never {
   console.error(`error: ${msg}`);
@@ -96,7 +124,7 @@ async function request(cfg: ServerCfg, method: string, params?: unknown): Promis
         const p = msg.id !== undefined ? pending.get(msg.id) : undefined;
         if (!p) continue;
         pending.delete(msg.id);
-        if (msg.error) p.reject(new Error(`${msg.error.code}: ${msg.error.message}`));
+        if (msg.error) p.reject(new RpcError(msg.error.code, msg.error.message, msg.error.data));
         else p.resolve(msg.result);
       }
     }
@@ -114,21 +142,49 @@ async function request(cfg: ServerCfg, method: string, params?: unknown): Promis
   }, TIMEOUT_MS);
 
   try {
-    await rpc("initialize", {
-      protocolVersion: "2024-11-05",
-      capabilities: {},
-      clientInfo: { name: "pi-mcp-client", version: "1.0" },
-    });
-    send({ jsonrpc: "2.0", method: "notifications/initialized" });
-    return await request_(method, params, rpc);
+    let result: any;
+    if (await isModern(rpc)) {
+      result = await rpc(method, { ...(params ?? {}), _meta: MODERN_META });
+    } else {
+      await rpc("initialize", { protocolVersion: LEGACY_VERSION, capabilities: {}, clientInfo: CLIENT_INFO });
+      send({ jsonrpc: "2.0", method: "notifications/initialized" });
+      result = await rpc(method, params);
+    }
+    // Results from legacy servers have no resultType, which the spec reads as "complete".
+    const resultType = result?.resultType ?? "complete";
+    if (resultType !== "complete") throw new Error(`server answered with resultType "${resultType}"; only complete results are supported`);
+    return result;
+  } catch (error) {
+    proc.kill();
+    fail(error instanceof Error ? error.message : String(error));
   } finally {
     clearTimeout(timer);
     proc.kill();
   }
 }
 
-async function request_(method: string, params: unknown, rpc: (m: string, p?: unknown) => Promise<any>) {
-  return rpc(method, params);
+/**
+ * Era detection from the stdio binding: a server/discover result or a recognized modern error means a modern
+ * server; any other error or no answer within PROBE_MS means a legacy one. A modern server that lacks
+ * MODERN_VERSION throws, never falls back.
+ */
+async function isModern(rpc: Rpc): Promise<boolean> {
+  let discovered: any;
+  const silence = Promise.withResolvers<undefined>();
+  const probeTimer = setTimeout(() => silence.resolve(undefined), PROBE_MS);
+  try {
+    discovered = await Promise.race([rpc("server/discover", { _meta: MODERN_META }), silence.promise]);
+  } catch (error) {
+    if (error instanceof RpcError && error.code === UNSUPPORTED_PROTOCOL_VERSION)
+      throw new Error(`server supports ${JSON.stringify(error.data?.supported)}; this client speaks ${MODERN_VERSION} or ${LEGACY_VERSION}`);
+    return false;
+  } finally {
+    clearTimeout(probeTimer); // a pending probe timer would keep the process alive until it fires
+  }
+  if (discovered === undefined) return false;
+  if (!Array.isArray(discovered.supportedVersions) || !discovered.supportedVersions.includes(MODERN_VERSION))
+    throw new Error(`server supports ${JSON.stringify(discovered.supportedVersions)}; this client speaks ${MODERN_VERSION} or ${LEGACY_VERSION}`);
+  return true;
 }
 
 const IMAGE_EXTENSIONS: Record<string, string> = {
@@ -150,7 +206,7 @@ function printContent(result: any) {
     if (block.type === "text") {
       console.log(block.text);
     } else if (block.type === "image" && typeof block.data === "string") {
-      imageDirectory ??= mkdtempSync(join(tmpdir(), "pi-mcp-images-"));
+      imageDirectory ??= mkdtempSync(join(tmpdir(), "mcp-images-"));
       const extension = IMAGE_EXTENSIONS[block.mimeType] ?? "bin";
       const path = join(imageDirectory, `image-${++imageIndex}.${extension}`);
       writeFileSync(path, Buffer.from(block.data, "base64"));
