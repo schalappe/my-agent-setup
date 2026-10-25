@@ -71,7 +71,7 @@ Green means the repo's checks passed and a live exercise of the change passed. T
    The repo has a `verify-<app>` skill (`.agents/skills/` or `.claude/skills/`) → the scenarios use its Launch and Drive recipes, and the verifier brief names its path.
    Skip the exercise only when nothing in the diff changes what executes (docs, comments, tests only). Config, env, migrations, feature flags, and build settings do change it. State the reason for any skip in the round file.
 
-Reuse first: an earlier `$dir/verify-K.json` whose `tree` equals `$tree` and has no blocked scenario already verified this exact code → `cp` it to `$dir/verify-N.json` and skip the dispatch. A different tree is never reused.
+Reuse first: an earlier `$dir/verify-K.json` whose `tree` equals `$tree` and has no blocked scenario already verified this exact code → `cp` it to `$dir/verify-N.json` and skip the dispatch. `verify-0.json` is the final verification of the `implement` skill, written before the loop; it is reused under the same rule. A different tree is never reused. When `verify-0.json` exists but its tree differs, print the files that differ (`git diff --name-only <its tree> $tree`) before dispatching, so the cause of the second verification is visible.
 
 Otherwise dispatch the `verifier` agent once (Sonnet, or Haiku when the live exercise is skipped) with the exact check commands, the scenarios with their expected outcomes, and this output contract: first record `git rev-parse HEAD` and `bun ~/.agents/skills/review-round/gate.ts tree`, then run everything and write `$dir/verify-N.json` (absolute path) with the observed exit codes. A command that did not run is not exit 0.
 

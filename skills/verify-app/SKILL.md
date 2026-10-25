@@ -32,10 +32,17 @@ Frontmatter `name` and a `description` naming the app and surface. Sections use 
   1. Run Doctor first on every use. Launch fails → fix the recipe before testing anything.
   2. A drive fails on a feature the code still has → stale recipe: fix it in the same PR. The code lost the feature → regression: report it, never edit the recipe to pass.
   3. A PR that changes launch, routes, or seeds updates the matching feature file in the same PR.
+  4. A scenario blocked because you did not know how to create its data → once you find the recipe, add it to the matching feature file (or a new one) in the same PR, so the next agent is not blocked.
 
 ## 3. Seed the feature map
 
-`verify-<app>/features/`: 3–5 files, one per top user-facing feature (from routes, commands, menus). Each file has four short parts: how to reach it (user point of view), how to drive it, the observable proof, gotchas. A seed missing a precondition goes in gotchas; never weaken the journey to pass.
+`verify-<app>/features/`: one file per user-facing feature (from routes, commands, menus), starting with at least the top 3. No upper limit: the map grows through Maintenance rule 4. Each file has five short parts:
+
+- **Reach**: how to get there, from the user's point of view.
+- **Set up**: how to create the data the feature needs (the real commands or API calls, in order), including the records verifiers most often lack, such as a second type of account or a closed period.
+- **Drive**: how to perform the user actions.
+- **Proof**: the observable result.
+- **Gotchas**: preconditions the seed lacks and states that cannot be produced locally. Never weaken the journey to pass.
 
 ## 4. Prove it
 
@@ -43,4 +50,4 @@ Run the generated skill once end to end: Doctor, Launch, drive one mapped featur
 
 ## Refresh mode
 
-Read the existing skill and feature files, interview the repo again, and show the user the diff. Rewrite only stale lines; keep every hand edit that is still true. Add missing features up to five. Then prove it (step 4).
+Read the existing skill and feature files, interview the repo again, and show the user the diff. Rewrite only stale lines; keep every hand edit that is still true. Add a **Set up** part to feature files that lack one, and add files for features verifiers were blocked on. Then prove it (step 4).
