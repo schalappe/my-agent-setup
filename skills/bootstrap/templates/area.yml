@@ -1,0 +1,45 @@
+name: <area>
+
+# The area's own check, the same command as locally. In a monorepo the `paths` filters skip this workflow
+# when nothing under <area>/ changed; a single-area repo drops both `paths` blocks.
+on:
+  pull_request:
+    paths:
+      - "<area>/**"
+      - ".github/workflows/<area>.yml"
+      - ".github/actions/<setup-action>/**"
+  push:
+    branches: [<default-branch>]
+    paths:
+      - "<area>/**"
+      - ".github/workflows/<area>.yml"
+      - ".github/actions/<setup-action>/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: <area>
+
+jobs:
+  check:
+    name: <area>
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@LATEST
+        with:
+          persist-credentials: false
+      # Setup steps from the language file.
+      - <setup>
+      - name: Lint, format, types, tests
+        run: <check command>
+      # Standard tier. `!cancelled()` reports the audit even when the check failed: one run shows every red.
+      - name: Dependency audit
+        if: ${{ !cancelled() }}
+        run: <audit command>

@@ -1,0 +1,5 @@
+interface:
+  display_name: "Bootstrap"
+  short_description: "Start or upgrade a project: toolchain, checks, security floor, CI"
+policy:
+  allow_implicit_invocation: false
