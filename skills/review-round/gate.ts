@@ -5,7 +5,8 @@
 //
 // State: $(git common dir)/review/<branch>/, shared by every worktree of the repo so it outlives them.
 // round-N.json is written by the skill; verify-N.json by the verifier only; the round's verdict is
-// derived here from verify-N.json, never taken from the round file.
+// derived here from verify-N.json, never taken from the round file. verify-0.json, written by the implement
+// skill's verifier before the loop, has no round: the skill copies it into a round when the tree matches.
 // `gate.ts slice N` splits round N's diff into review slices of at most SLICE_LINES changed lines (a bigger single
 // file is its own slice) and writes two prompts per slice, round-N/review-<S>.prompt (correctness) and
 // review-sec-<S>.prompt (security), printing their names (`A sec-A B sec-B`). The reviewer task texts live here so
