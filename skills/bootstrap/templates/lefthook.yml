@@ -1,0 +1,51 @@
+# Git hooks. Needs `betterleaks` on PATH (scripts/install-betterleaks.sh) and `lefthook install` once per clone.
+# The secret scan is the only gate before a secret reaches git on a private free repo: GitHub's push protection
+# is not available there. Bypass (LEFTHOOK=0) is for emergencies; CI scans the full history anyway.
+
+pre-commit:
+  parallel: true
+  jobs:
+    # --verbose names the file and rule of each leak; the secret itself stays redacted.
+    - name: secrets
+      run: betterleaks git --pre-commit --staged --redact --verbose --no-banner
+
+    # Standard tier: <default-branch> changes only through merged PRs. The repo's first commit is the
+    # exception: it has no branch to come from.
+    - name: protected-branch
+      run: |
+        git rev-parse -q --verify HEAD >/dev/null || exit 0
+        if [ "$(git branch --show-current)" = "<default-branch>" ]; then
+          echo "No commit on <default-branch>: branch off and open a PR."
+          exit 1
+        fi
+
+    # One block per area; `glob` and `run` come from its language file (python.md, typescript.md, rust.md).
+    - name: <area>-format
+      root: <area>/
+      glob: "<glob>"
+      run: <fix command>
+      stage_fixed: true
+
+# Standard tier.
+commit-msg:
+  jobs:
+    - name: conventional-commit
+      run: |
+        head -n 1 {1} | grep -Eq '^((feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9./_-]+\))?!?: .+|Merge |Revert "|fixup! |squash! )' || {
+          echo "Commit message must follow Conventional Commits, e.g. 'fix(api): reject empty names'."
+          exit 1
+        }
+
+# Standard tier. git feeds one `<local ref> <local sha> <remote ref> <remote sha>` line per pushed ref.
+# Creating <default-branch> on the remote (remote sha all zeros) is the one push allowed: the first push.
+pre-push:
+  jobs:
+    - name: protected-branch
+      use_stdin: true
+      run: |
+        while read -r _ _ remote_ref remote_sha; do
+          if [ "$remote_ref" = "refs/heads/<default-branch>" ] && [ "$remote_sha" != "0000000000000000000000000000000000000000" ]; then
+            echo "No push to <default-branch>: merge a PR instead."
+            exit 1
+          fi
+        done

@@ -1,0 +1,25 @@
+name: Setup Bun environment
+description: Install the Bun from packageManager and the locked dependencies. Caller must check out first.
+
+inputs:
+  working-directory:
+    description: Directory holding package.json and bun.lock
+    required: false
+    default: .
+
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@LATEST
+      with:
+        bun-version-file: ${{ inputs.working-directory }}/package.json
+
+    - uses: actions/cache@LATEST
+      with:
+        path: ~/.bun/install/cache
+        key: bun-${{ runner.os }}-${{ hashFiles(format('{0}/bun.lock', inputs.working-directory)) }}
+        restore-keys: bun-${{ runner.os }}-
+
+    - run: bun install --frozen-lockfile
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}

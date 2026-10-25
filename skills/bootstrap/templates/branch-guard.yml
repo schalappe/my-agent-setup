@@ -1,0 +1,37 @@
+name: Branch guard
+
+# A private repo on a free plan has no rulesets or branch protection, so this stands in for them. The local
+# hooks refuse commits and pushes on <default-branch>; this catches what bypassed them (LEFTHOOK=0, another
+# clone). A failed run is the alert: GitHub mails the owner.
+on:
+  push:
+    branches: [<default-branch>]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  merged-pr:
+    # The push that creates the branch (the repo's first push) has no PR to come from.
+    if: ${{ !github.event.created }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Head commit comes from a merged PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          # The commit-to-PR index can lag the merge by a few seconds.
+          for _ in 1 2 3 4 5 6; do
+            pr=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
+              --jq "[.[] | select(.merged_at != null and .base.ref == \"${BRANCH}\" and .merge_commit_sha == \"${GITHUB_SHA}\")][0].number // empty")
+            [ -n "$pr" ] && break
+            sleep 10
+          done
+          if [ -z "$pr" ]; then
+            echo "::error::${GITHUB_SHA:0:12} was pushed to ${BRANCH} by ${GITHUB_ACTOR} without a merged PR. Revert it through a PR."
+            exit 1
+          fi
+          echo "${GITHUB_SHA:0:12} is the merge of PR #${pr} into ${BRANCH}" | tee -a "$GITHUB_STEP_SUMMARY"
