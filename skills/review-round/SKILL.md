@@ -1,16 +1,18 @@
 ---
 name: review-round
-description: Run verify → review → fix rounds on the current branch's pull request until the review gate stops it or the round cap is hit. Claude Code only. Use when the user asks to review-loop, auto-review, or run review rounds on a PR.
-argument-hint: "[max rounds, default 5]"
+description: Run verify → review → fix rounds on a pull request, in its own worktree, until the review gate stops it or the round cap is hit. Claude Code only. Use when the user asks to review-loop, auto-review, or run review rounds on a PR.
+argument-hint: "[#PR] [max rounds, default 5]"
 model: sonnet
 effort: medium
 ---
 
 # Review rounds
 
-Verify → review → fix rounds on the PR attached to the current branch, in Claude Code: `/review-round 5`. The skill runs the loop itself, so do not wrap it in `/loop`.
+Verify → review → fix rounds on a pull request, in Claude Code: `/review-round #42 5`. The skill runs the loop itself, so do not wrap it in `/loop`.
 
-Max rounds `M` = the number given with the invocation, or 5.
+PR = the `#N` (or PR URL) given with the invocation, or else the PR of the current branch. Max rounds `M` = the bare number given, or 5: `/review-round 42` means 42 rounds on the current branch, so a PR always takes its `#`.
+
+Each loop runs in the PR branch's own worktree (a second checkout of the same repository), never in a checkout another session uses. That is what lets several loops, and other agents, run at once from the same main checkout without `git switch`.
 
 Each step runs on the cheapest model that does it reliably. The orchestration (this file) runs on Sonnet through the frontmatter, until the end of the turn. Set every other model at the call; never rely on the session default:
 
@@ -28,14 +30,20 @@ Gate: `gate=~/.agents/skills/review-round/gate.ts`. It stops the loop when the r
 
 ## Preflight (once)
 
-- Branch: `git branch --show-current`.
-- PR: `gh pr view <branch> --json number`. No PR → stop and say `No PR for branch <branch>; open one first.`
-- Worktree: `git worktree list --porcelain`. The branch is checked out in another worktree → stop and print `cd <worktree-path>` followed by the same invocation.
+- PR and branch:
+  - `#N` given: `gh pr view <N> --json number,state,headRefName,isCrossRepository`. `state` is not `OPEN` → stop and say `PR #<N> is <state>.` `isCrossRepository` is true → stop and say `PR #<N> comes from a fork; the loop cannot push to it.` Branch = `headRefName`.
+  - No `#N`: branch = `git branch --show-current`, PR = `gh pr view <branch> --json number`. No PR → stop and say `No PR for branch <branch>; open one first.`
+- Worktree `wt`, from `git worktree list --porcelain` (its first entry is the main checkout):
+  - The branch is checked out in a worktree (the current one included) → `wt` = that path. Nothing new is created.
+  - Otherwise create one at the location the repo's `AGENTS.md` gives for worktrees, else at `<main-checkout>.worktrees/<branch>` beside the main checkout (outside it, so its tools and `AGENTS.md` lookup never see a second copy). `git fetch origin <branch>`; then `git worktree add "$wt" <branch>` and `git -C "$wt" merge --ff-only origin/<branch>` when the local branch exists, else `git worktree add --track -b <branch> "$wt" origin/<branch>`. The fast-forward fails → stop and say `Local <branch> has diverged from origin; reconcile it first.`
+  - Install dependencies in `wt` with the repo's frozen install (e.g. `bun install --frozen-lockfile`) before the first commit: git hooks run from the worktree and fail without them.
 - `command -v claude` and `[ -n "$TYPESAFE_API_KEY" ]`. Either is missing → stop and say which one.
+
+Every shell command from here on, the gate included, runs from `wt` (start each call with `cd "$wt" &&`: the shell may reset its directory between calls). Every path given to a file tool or a subagent is absolute under `wt`: file tools resolve relative paths against the main checkout.
 
 ## Loop
 
-Repeat up to `M` times: run one round (below), then `bun $gate`.
+Repeat up to `M` times: run one round (below), then `cd "$wt" && bun $gate`.
 
 - Exit 0 → print the gate's line (`review loop: converged|stalled`). On `converged`, run the [minor pass](#minor-pass) if it has not run in this loop; otherwise [hand over](#hand-over).
 - Exit 1 → start the next round.
@@ -70,10 +78,11 @@ Green means the repo's checks passed and a live exercise of the change passed. T
    - CLI or library: run the real command or a throwaway script on the changed path and assert output.
    The repo has a `verify-<app>` skill (`.agents/skills/` or `.claude/skills/`) → the scenarios use its Launch and Drive recipes, and the verifier brief names its path.
    Skip the exercise only when nothing in the diff changes what executes (docs, comments, tests only). Config, env, migrations, feature flags, and build settings do change it. State the reason for any skip in the round file.
+3. Isolation: other loops and sessions may run their own servers at the same time. The live exercise starts its services from `wt` with the ports, database, and containers the repo's `AGENTS.md` (or its `verify-<app>` skill) assigns to a parallel session, takes that slot before starting, and releases it when done. The repo documents no such mechanism → use the default ports; a port already in use is `blocked: port <port> in use`, never a reason to stop or reuse another session's server.
 
 Reuse first: an earlier `$dir/verify-K.json` whose `tree` equals `$tree` and has no blocked scenario already verified this exact code → `cp` it to `$dir/verify-N.json` and skip the dispatch. `verify-0.json` is the final verification of the `implement` skill, written before the loop; it is reused under the same rule. A different tree is never reused. When `verify-0.json` exists but its tree differs, print the files that differ (`git diff --name-only <its tree> $tree`) before dispatching, so the cause of the second verification is visible.
 
-Otherwise dispatch the `verifier` agent once (Sonnet, or Haiku when the live exercise is skipped) with the exact check commands, the scenarios with their expected outcomes, and this output contract: first record `git rev-parse HEAD` and `bun ~/.agents/skills/review-round/gate.ts tree`, then run everything and write `$dir/verify-N.json` (absolute path) with the observed exit codes. A command that did not run is not exit 0.
+Otherwise dispatch the `verifier` agent once (Sonnet, or Haiku when the live exercise is skipped) with the absolute path of `wt` (it runs everything from there), the exact check commands, the scenarios with their expected outcomes, the isolation rule above, and this output contract: first record `git rev-parse HEAD` and `bun ~/.agents/skills/review-round/gate.ts tree`, then run everything and write `$dir/verify-N.json` (absolute path) with the observed exit codes. A command that did not run is not exit 0.
 
 ```json
 {"head": "abc1234…", "tree": "9f3e…", "checks": [{"command": "bun test", "exit": 0}], "scenarios": [{"name": "POST /orders with valid body returns 201 and creates the row", "result": "pass", "surface": "api"}, {"name": "Deleting the last stock re-enables « Supprimer »", "result": "pass", "surface": "browser"}, {"name": "…", "result": "blocked", "reason": "dev DB unreachable"}]}
@@ -81,7 +90,7 @@ Otherwise dispatch the `verifier` agent once (Sonnet, or Haiku when the live exe
 
 `result` is `pass`, `fail`, or `blocked`; `surface` is `browser`, `api`, or `cli`. The outcome is the line `bun $gate verify N` prints (`green`, `red`, or `blocked: <reason>`), never the agent's summary.
 
-- Red: dispatch one general-purpose agent (Sonnet) to fix only what the failing checks or scenarios require, then the verifier once more (it overwrites `verify-N.json`). Do not review code that fails its own checks. Go to step 4.
+- Red: dispatch one general-purpose agent (Sonnet) with the absolute path of `wt` to fix only what the failing checks or scenarios require, then the verifier once more (it overwrites `verify-N.json`). Do not review code that fails its own checks. Go to step 4.
 - Blocked: unblock it with the repo's documented local setup (nearest `AGENTS.md`), then the verifier once more. When the reason is a missing browser scenario, dispatch the verifier again with one. Still blocked → skip review, go to step 4. A blocked scenario is never green.
 - Green: continue.
 
@@ -98,7 +107,7 @@ The first reviewed round covers every file. Later rounds are re-reviews: only th
 Then run all slices in parallel in one background shell call from the repo root and wait for it:
 
 ```bash
-cd "$(git rev-parse --show-toplevel)"
+cd "$wt"
 schema=$(cat ~/.agents/skills/review-round/reviewer-schema.json)
 for S in $slices; do
   claude -p --model fable --effort high --output-format json --json-schema "$schema" \
@@ -117,7 +126,7 @@ Only `critical` and `major` findings are fixed by the loop; fixing minors every 
 
 A finding with `pre_existing: true` is a defect the PR did not introduce, whatever its severity: the loop never fixes it and it never counts toward the gate. Append each to `$dir/pre-existing.md` (file, line, severity, title, trigger, why) unless the same file and title are already there; they reach the user at the [end](#decisions).
 
-Merge the slices' findings. Dispatch one general-purpose agent (Opus, high: a wrong rejection stalls the loop and a failed fix repeats) with the PR body, the critical and major findings, and the patch paths of the files they touch. When a finding names a pattern, the agent fixes every instance: it greps the repo for the pattern before reporting the finding fixed. For each finding it either fixes it or rejects it with a one-sentence reason (the finding is wrong, outside the diff, contradicts the PR intent, is hypothetical because no traced caller reaches that state, or is a preference with no concrete failure). A finding that hinges on a business or product rule the PR intent does not settle is rejected with a reason starting `decision:`, naming the question, its recommendation, and the evidence. It returns `{"fixed":[titles],"rejected":[{"file","line","title","reason"}]}` and does not commit.
+Merge the slices' findings. Dispatch one general-purpose agent (Opus, high: a wrong rejection stalls the loop and a failed fix repeats) with the absolute path of `wt` (it edits only there), the PR body, the critical and major findings, and the patch paths of the files they touch. When a finding names a pattern, the agent fixes every instance: it greps the repo for the pattern before reporting the finding fixed. For each finding it either fixes it or rejects it with a one-sentence reason (the finding is wrong, outside the diff, contradicts the PR intent, is hypothetical because no traced caller reaches that state, or is a preference with no concrete failure). A finding that hinges on a business or product rule the PR intent does not settle is rejected with a reason starting `decision:`, naming the question, its recommendation, and the evidence. It returns `{"fixed":[titles],"rejected":[{"file","line","title","reason"}]}` and does not commit.
 
 Append each `decision:` rejection to `$dir/decisions.md` and keep going: decisions reach the user once, at the [end](#decisions), never as mid-run notes.
 
@@ -154,7 +163,7 @@ Round N: verify=<green|red|blocked from `bun $gate verify N`> findings=4 major=2
 Runs once per loop, when the gate first prints `converged`. `$dir/minor-pass` exists → it already ran: [hand over](#hand-over). Owners almost always ask for the minors to be fixed in the same PR, so the loop does it before handing over.
 
 1. Write `$dir/minor-pass` first, so a pass that changes nothing still counts as run. Read `minor` from the latest `round-N.json`. Empty → [hand over](#hand-over).
-2. Dispatch one general-purpose agent (Sonnet, medium) with the PR body, those minor findings, and the patch paths of the files they touch. It fixes each one or rejects it under the [Fix](#3-fix) rules (including `decision:`), returns `{"fixed":[titles],"rejected":[{"file","line","title","reason"}]}`, and does not commit.
+2. Dispatch one general-purpose agent (Sonnet, medium) with the absolute path of `wt`, the PR body, those minor findings, and the patch paths of the files they touch. It fixes each one or rejects it under the [Fix](#3-fix) rules (including `decision:`), returns `{"fixed":[titles],"rejected":[{"file","line","title","reason"}]}`, and does not commit.
 3. Nothing changed → report the rejections and [hand over](#hand-over). Otherwise commit `review: minor fixes` and push, then run one more full round (verify, review, fix, record) and `bun $gate`. That round reviews the minor fixes; its own minors go to the human.
 4. The gate's exit after that round decides as usual: exit 1 continues the loop within `M` plus that one extra round.
 
@@ -164,9 +173,19 @@ Report each minor as fixed or rejected with its reason.
 
 Runs when the loop stops after `converged`. A stalled, capped, or broken loop never gets here, so its PR stays as it is. Run `bun $gate ready`:
 
-- Exit 0 → if `gh pr view --json isDraft --jq .isDraft` prints `true`, run `gh pr ready <number>` and print `PR #<number> marked ready`.
-- Exit 1 → print the gate's line (`review loop: stays draft (<reason>)`) and leave the PR as it is.
+- Exit 0 → if `gh pr view --json isDraft --jq .isDraft` prints `true`, run `gh pr ready <number>` and print `PR #<number> marked ready`. Then [remove the worktree](#remove-the-worktree).
+- Exit 1 → print the gate's line (`review loop: stays draft (<reason>)`) and leave the PR as it is. Keep the worktree and print its path: the human finishes the PR there.
 - Exit 2 → the gate is broken. Print its stderr.
+
+## Remove the worktree
+
+Runs only once the PR is ready for review: the loop's work on the branch is over. A stopped, stalled, capped, or draft loop keeps its worktree. It runs last, after [Decisions](#decisions), so the user reads them before answering.
+
+1. `wt` is the main checkout → remove nothing.
+2. `git -C "$wt" status --porcelain` prints anything, or `git -C "$wt" rev-list @{u}..HEAD` lists a commit or fails (no upstream) → keep it and print `Worktree <wt> kept: uncommitted or unpushed changes.` Never force the removal: those changes may be the user's.
+3. Release what the live exercise took for this worktree (ports slot, database, containers), the way the repo's `AGENTS.md` says.
+4. Ask the user with the ask tool: remove the worktree at `<wt>` for PR #<number> now that it is ready? Options: remove it (recommended: everything is committed and pushed) or keep it. Keep → print `Worktree <wt> kept at the user's request.` and stop. Never remove it without that answer.
+5. From the main checkout: `git worktree remove "$wt"`, then print `Worktree <wt> removed`. The branch and `$dir` stay: the PR still needs the branch, and `noise.ts` reads `$dir`.
 
 ## Decisions
 
