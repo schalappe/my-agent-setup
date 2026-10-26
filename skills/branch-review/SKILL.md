@@ -9,7 +9,7 @@ Three-axis review of the diff between `HEAD` and a fixed point the user supplies
 - **Spec**: does the code faithfully implement the originating issue / spec?
 - **Correctness**: does the changed code behave right for every caller, every state, and every failure path?
 
-The axes run as **parallel sub-agents** so they don't pollute each other's context, then this skill aggregates their findings.
+The axes run as **parallel sub-agents** so they don't pollute each other's context, then this skill aggregates their findings. Each sub-agent is GPT-6.1 Sol in a headless `claude -p` process (`~/.agents/skills/review-round/sol.sh`, through the local CLI Proxy), never an Agent-tool subagent: the code's writer is Claude, and a reviewer from another model family does not share its blind spots.
 
 The issue tracker should have been provided to you. If not, tell the user to run `/setup-repo`.
 
@@ -21,7 +21,7 @@ Whatever the user said is the fixed point (a commit SHA, branch name, tag, `main
 
 Capture the diff command once: `git diff <fixed-point>...HEAD` (three-dot, so the comparison is against the merge-base). Also note the list of commits via `git log <fixed-point>..HEAD --oneline`.
 
-Before going further, confirm the fixed point resolves (`git rev-parse <fixed-point>`) and the diff is non-empty. A bad ref or empty diff should fail here, not inside three parallel sub-agents.
+Before going further, confirm the fixed point resolves (`git rev-parse <fixed-point>`), the diff is non-empty, and `~/.agents/skills/review-round/sol.sh --check` passes (it names what is missing: the proxy, `CLI_PROXY_API_KEY`, or the model). A bad ref, an empty diff, or a missing reviewer should fail here, not inside three parallel sub-agents.
 
 Exclude generated files from the text diff: anything `git check-attr linguist-generated diff` marks generated or `-diff`, plus obviously generated API clients and specs. Append `':(exclude)<path>'` pathspecs to the diff command and list the excluded paths separately; reviewers check them with targeted queries (`git diff --stat`, `git grep` for a specific symbol) instead of reading them.
 
@@ -62,7 +62,17 @@ Each smell reads *what it is* → *how to fix*; match it against the diff:
 
 ### 4. Spawn the three sub-agents in parallel
 
-Issue the three sub-agent calls together, in the foreground, and aggregate the reports they return.
+Write each prompt to a file in a fresh directory outside the repo (`d=$(mktemp -d)`; `standards.prompt`, `spec.prompt`, `correctness.prompt`), with the spec saved beside them when it came from the tracker. Prompts carry paths, never your conversation. Run the three together, from the repository root, in one background shell call, and wait for it:
+
+```bash
+for axis in standards spec correctness; do
+  ~/.agents/skills/review-round/sol.sh --tools Read,Grep,Glob,Bash --allowedTools Bash --permission-prompts none \
+    < "$d/$axis.prompt" 2> "$d/$axis.log" > "$d/$axis.json" &
+done
+wait
+```
+
+Each report is `jq -r .result "$d/<axis>.json"`. Bash is allowed because every axis reads the diff with `git`, and Correctness also runs tests in a throwaway worktree. A report that is missing or has `.is_error` true: rerun that axis once, then report it as failed with the tail of its log. Never write an axis's report yourself.
 
 Each brief ends with: "Report a finding only after reproducing it (command and output) or citing the code that proves it (file, line, quoted lines)."
 
