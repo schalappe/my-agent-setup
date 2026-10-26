@@ -66,13 +66,13 @@ Write each prompt to a file in a fresh directory outside the repo (`d=$(mktemp -
 
 ```bash
 for axis in standards spec correctness; do
-  ~/.agents/skills/review-round/sol.sh --tools Read,Grep,Glob,Bash --allowedTools Bash --permission-prompts none \
+  ~/.agents/skills/review-round/sol.sh --tools Read,Grep,Glob,Bash --allowedTools Bash --permission-prompts none --add-dir "$d" \
     < "$d/$axis.prompt" 2> "$d/$axis.log" > "$d/$axis.json" &
 done
 wait
 ```
 
-Each report is `jq -r .result "$d/<axis>.json"`. Bash is allowed because every axis reads the diff with `git`, and Correctness also runs tests in a throwaway worktree. A report that is missing or has `.is_error` true: rerun that axis once, then report it as failed with the tail of its log. Never write an axis's report yourself.
+Each report is `jq -r .result "$d/<axis>.json"`. `--add-dir "$d"` lets the reviewers read the spec and gate files there: their file tools are confined to the repository otherwise. Bash is allowed because every axis reads the diff with `git`, and Correctness also runs tests in a throwaway worktree. A report that is missing or has `.is_error` true: rerun that axis once, then report it as failed with the tail of its log. Never write an axis's report yourself.
 
 Each brief ends with: "Report a finding only after reproducing it (command and output) or citing the code that proves it (file, line, quoted lines)."
 
