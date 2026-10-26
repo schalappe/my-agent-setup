@@ -14,13 +14,13 @@ PR = the `#N` (or PR URL) given with the invocation, or else the PR of the curre
 
 Each loop runs in the PR branch's own worktree (a second checkout of the same repository), never in a checkout another session uses. That is what lets several loops, and other agents, run at once from the same main checkout without `git switch`.
 
-Each step runs on the cheapest model that does it reliably. The orchestration (this file) runs on Sonnet through the frontmatter, until the end of the turn. Set every other model at the call; never rely on the session default:
+Claude writes the code; GPT-6.1 Sol, another model family, verifies and reviews it, so the checks do not share the writer's blind spots. Sol runs in headless `claude -p` processes through the local CLI Proxy: `sol=~/.agents/skills/review-round/sol.sh` sets the model and the proxy. The orchestration (this file) runs on Sonnet through the frontmatter, until the end of the turn. Set every other model at the call; never rely on the session default:
 
 | Step | Model, effort | How |
 |---|---|---|
-| Verify | Sonnet, low (Haiku, low, when the round has no live exercise) | `verifier` agent, Agent tool `model` and `effort` |
+| Verify | GPT-6.1 Sol | `$sol` with the [verifier](#verifier) prompt |
 | Fix (red) | Sonnet, medium | general-purpose agent, Agent tool `model` and `effort` |
-| Review | Fable, high | `claude -p`, two processes per slice: correctness and security |
+| Review | GPT-6.1 Sol | `$sol`, two processes per slice: correctness and security |
 | Fix (findings) | Opus, high | general-purpose agent, Agent tool `model` and `effort` |
 | Same defect | TypeSafe Jev | the gate |
 
@@ -37,7 +37,7 @@ Gate: `gate=~/.agents/skills/review-round/gate.ts`. It stops the loop when the r
   - The branch is checked out in a worktree (the current one included) → `wt` = that path. Nothing new is created.
   - Otherwise create one at the location the repo's `AGENTS.md` gives for worktrees, else at `<main-checkout>.worktrees/<branch>` beside the main checkout (outside it, so its tools and `AGENTS.md` lookup never see a second copy). `git fetch origin <branch>`; then `git worktree add "$wt" <branch>` and `git -C "$wt" merge --ff-only origin/<branch>` when the local branch exists, else `git worktree add --track -b <branch> "$wt" origin/<branch>`. The fast-forward fails → stop and say `Local <branch> has diverged from origin; reconcile it first.`
   - Install dependencies in `wt` with the repo's frozen install (e.g. `bun install --frozen-lockfile`) before the first commit: git hooks run from the worktree and fail without them.
-- `command -v claude` and `[ -n "$TYPESAFE_API_KEY" ]`. Either is missing → stop and say which one.
+- `command -v claude`, `[ -n "$TYPESAFE_API_KEY" ]`, and `$sol --check` (CLI Proxy up with `CLI_PROXY_API_KEY`, serving GPT-6.1 Sol). One fails → stop and say which one.
 
 Every shell command from here on, the gate included, runs from `wt` (start each call with `cd "$wt" &&`: the shell may reset its directory between calls). Every path given to a file tool or a subagent is absolute under `wt`: file tools resolve relative paths against the main checkout.
 
@@ -78,11 +78,16 @@ Green means the repo's checks passed and a live exercise of the change passed. T
    - CLI or library: run the real command or a throwaway script on the changed path and assert output.
    The repo has a `verify-<app>` skill (`.agents/skills/` or `.claude/skills/`) → the scenarios use its Launch and Drive recipes, and the verifier brief names its path.
    Skip the exercise only when nothing in the diff changes what executes (docs, comments, tests only). Config, env, migrations, feature flags, and build settings do change it. State the reason for any skip in the round file.
-3. Isolation: other loops and sessions may run their own servers at the same time. The live exercise starts its services from `wt` with the ports, database, and containers the repo's `AGENTS.md` (or its `verify-<app>` skill) assigns to a parallel session, takes that slot before starting, and releases it when done. The repo documents no such mechanism → use the default ports; a port already in use is `blocked: port <port> in use`, never a reason to stop or reuse another session's server.
+3. Isolation: other loops and sessions may run their own servers at the same time. The live exercise starts its services from `wt` with the ports, database, and containers the repo's `AGENTS.md` (or its `verify-<app>` skill) assigns to a parallel session. The repo documents no such mechanism → use the default ports; a port already in use is `blocked: port <port> in use`, never a reason to stop or reuse another session's server.
+4. Stack: launching the app costs minutes (a backend image build, migrations, seeds), so the loop launches it once and every verifier drives the same one. The repo has a `verify-<app>` skill with Doctor, Launch, and Cleanup → before a dispatch with a live exercise, run its Doctor from `wt`:
+   - free → take the slot and Launch, building first when the skill says the change needs it; record in `$dir/stack` what you launched, so [Release the stack](#release-the-stack) knows it is yours.
+   - ready, launched by this loop, and holding the code under test → keep it. Doctor says the running build misses changes the diff made since the launch (for example backend commits since the image) → Cleanup, rebuild, Launch.
+   - busy (another session holds it) → launch nothing; the verifier's Doctor reports it and its scenarios come back `blocked`.
+   The verifier brief then says `the loop launched the stack; do not launch or clean it up`. Without such a skill, the verifier starts and stops what its scenarios need.
 
 Reuse first: an earlier `$dir/verify-K.json` whose `tree` equals `$tree` and has no blocked scenario already verified this exact code → `cp` it to `$dir/verify-N.json` and skip the dispatch. `verify-0.json` is the final verification of the `implement` skill, written before the loop; it is reused under the same rule. A different tree is never reused. When `verify-0.json` exists but its tree differs, print the files that differ (`git diff --name-only <its tree> $tree`) before dispatching, so the cause of the second verification is visible.
 
-Otherwise dispatch the `verifier` agent once (Sonnet, or Haiku when the live exercise is skipped) with the absolute path of `wt` (it runs everything from there), the exact check commands, the scenarios with their expected outcomes, the isolation rule above, and this output contract: first record `git rev-parse HEAD` and `bun ~/.agents/skills/review-round/gate.ts tree`, then run everything and write `$dir/verify-N.json` (absolute path) with the observed exit codes. A command that did not run is not exit 0.
+Otherwise run the [verifier](#verifier) once with a brief holding the absolute path of `wt` (it runs everything from there), the exact check commands, the scenarios with their expected outcomes, the isolation rule above, the stack line, and this output contract: first record `git rev-parse HEAD` and `bun ~/.agents/skills/review-round/gate.ts tree`, then run everything and write `$dir/verify-N.json` (absolute path) with the observed exit codes. A command that did not run is not exit 0.
 
 ```json
 {"head": "abc1234…", "tree": "9f3e…", "checks": [{"command": "bun test", "exit": 0}], "scenarios": [{"name": "POST /orders with valid body returns 201 and creates the row", "result": "pass", "surface": "api"}, {"name": "Deleting the last stock re-enables « Supprimer »", "result": "pass", "surface": "browser"}, {"name": "…", "result": "blocked", "reason": "dev DB unreachable"}]}
@@ -94,11 +99,24 @@ Otherwise dispatch the `verifier` agent once (Sonnet, or Haiku when the live exe
 - Blocked: unblock it with the repo's documented local setup (nearest `AGENTS.md`), then the verifier once more. When the reason is a missing browser scenario, dispatch the verifier again with one. Still blocked → skip review, go to step 4. A blocked scenario is never green.
 - Green: continue.
 
+### Verifier
+
+The verifier is GPT-6.1 Sol in a headless `claude -p` process, never an Agent-tool subagent: those run on Claude, the writer's family. Write its brief to `$p/verify.brief`, then run it from `wt` in one background shell call and wait for it:
+
+```bash
+cd "$wt"
+cat ~/.agents/skills/review-round/verifier.md "$p/verify.brief" \
+  | $sol --tools Read,Grep,Glob,Bash,Write --dangerously-skip-permissions 2> "$p/verify.log" > "$p/verify.out.json"
+jq -r .result "$p/verify.out.json"
+```
+
+It runs without permission prompts or sandbox, like the old in-session verifier: gates, Docker, and browsers write outside `wt` (Gradle, Bun, and Playwright caches). `verifier.md` keeps it from editing sources. The printed report is for the hand-off; the verdict is still `bun $gate verify N`. A run with no report or no `verify-N.json`: rerun once, then stop and show the tail of `verify.log`.
+
 ## 2. Review
 
 Recompute `tree`. It must equal `tree` in `verify-N.json` (the code reviewed is the code verified); otherwise re-run step 1.
 
-Reviewers run on Fable in a separate headless `claude -p` process: a model family other than the writer's (Opus or Sonnet), a fresh context with no conversation, read-only tools, and only its slice's patches. That separation is what keeps the review from sharing the writer's blind spots. `--strict-mcp-config` and `--disable-slash-commands` keep MCP servers and skills out of its context (about 26k input tokens instead of 210k); `--json-schema` enforces the output and puts it under `structured_output`.
+Reviewers run on GPT-6.1 Sol in a separate headless `claude -p` process: a model family other than the writer's (Claude), a fresh context with no conversation, read-only tools, and only its slice's patches. That separation is what keeps the review from sharing the writer's blind spots. `$sol` passes `--strict-mcp-config` and `--disable-slash-commands`, which keep MCP servers and skills out of its context (about 26k input tokens instead of 210k); `--json-schema` enforces the output and puts it under `structured_output`.
 
 Write the prompts: `slices=$(bun $gate slice N)`. It packs `files.txt` into slices of at most 2000 changed lines (a bigger single file is its own slice), writes two prompts per slice letter `S`, `$p/review-S.prompt` (correctness) and `$p/review-sec-S.prompt` (security, checked against the same list as the `hardening` skill), and prints their names (`A sec-A B sec-B`); the loop below runs each name as its own slice. Each prompt carries the reviewer task text, the PR body, the checks and scenarios that passed, the full `files.txt` for orientation, the findings earlier rounds rejected or recorded as pre-existing (so the reviewer does not repeat them without new evidence), and the absolute paths of that slice's patches: never the whole diff or the conversation.
 
@@ -110,9 +128,7 @@ Then run all slices in parallel in one background shell call from the repo root 
 cd "$wt"
 schema=$(cat ~/.agents/skills/review-round/reviewer-schema.json)
 for S in $slices; do
-  claude -p --model fable --effort high --output-format json --json-schema "$schema" \
-    --tools Read,Grep,Glob --strict-mcp-config --disable-slash-commands \
-    --no-session-persistence --permission-prompts none \
+  $sol --json-schema "$schema" --tools Read,Grep,Glob --permission-prompts none \
     < "$p/review-$S.prompt" 2> "$p/review-$S.log" | jq -e .structured_output > "$p/review-$S.json" &
 done
 wait
@@ -183,9 +199,12 @@ Runs only once the PR is ready for review: the loop's work on the branch is over
 
 1. `wt` is the main checkout → remove nothing.
 2. `git -C "$wt" status --porcelain` prints anything, or `git -C "$wt" rev-list @{u}..HEAD` lists a commit or fails (no upstream) → keep it and print `Worktree <wt> kept: uncommitted or unpushed changes.` Never force the removal: those changes may be the user's.
-3. Release what the live exercise took for this worktree (ports slot, database, containers), the way the repo's `AGENTS.md` says.
-4. Ask the user with the ask tool: remove the worktree at `<wt>` for PR #<number> now that it is ready? Options: remove it (recommended: everything is committed and pushed) or keep it. Keep → print `Worktree <wt> kept at the user's request.` and stop. Never remove it without that answer.
-5. From the main checkout: `git worktree remove "$wt"`, then print `Worktree <wt> removed`. The branch and `$dir` stay: the PR still needs the branch, and `noise.ts` reads `$dir`.
+3. Ask the user with the ask tool: remove the worktree at `<wt>` for PR #<number> now that it is ready? Options: remove it (recommended: everything is committed and pushed) or keep it. Keep → print `Worktree <wt> kept at the user's request.` and stop. Never remove it without that answer.
+4. From the main checkout: `git worktree remove "$wt"`, then print `Worktree <wt> removed`. The branch and `$dir` stay: the PR still needs the branch, and `noise.ts` reads `$dir`.
+
+## Release the stack
+
+Whenever the loop stops (converged, stalled, capped, or broken), before [Decisions](#decisions): `$dir/stack` exists → run the `verify-<app>` skill's Cleanup from `wt`, release the slot (ports, database, containers) the way the repo's `AGENTS.md` says, and delete `$dir/stack`. A stack held by a stopped loop blocks every other session's verification. Never clean up a stack the loop did not launch.
 
 ## Decisions
 

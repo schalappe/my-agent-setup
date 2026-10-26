@@ -23,7 +23,7 @@ The checkout does not start → fix it or report the exact failure before genera
 
 Frontmatter `name` and a `description` naming the app and surface. Sections use this repo's real commands and selectors:
 
-- **Doctor**: one read-only check: process up, right build, port owned by this run, auth valid.
+- **Doctor**: one read-only check: process up, right build, port owned by this run, auth valid. Its last line is a verdict, `READY`, `FREE`, `BUSY` (another session holds it), or `BROKEN`, and it says when the running build misses code changes. `review-round` reads it to launch the stack once and keep it across verifiers.
 - **Launch**: the command from an empty data dir (migrations, seeds) and the ready signal: usable, not just a port answering.
 - **Drive**: the harness recipe, with any helper script executable and its invocation shown. Prefer stable handles (ARIA roles and names, `data-*`, route paths, prompt strings) over coordinates.
 - **Evidence**: what to capture and where. Drive the real user path, never test-only endpoints; capture the action and the resulting state, side effects included.

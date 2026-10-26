@@ -37,5 +37,5 @@ When the shape of that interface is itself in question (how deep the module is, 
 - **No test beats a bad test.** Skip the test when it would mostly check mocks, need heavy infrastructure for a small fix, or pin the implementation.
 - **Failing test impractical.** Use the closest executable check (a script, a curl, a CLI run) and report its output before and after the change as the evidence.
 - **One slice at a time.** One seam, one test, one minimal implementation per cycle.
-- **Run only the focused test.** Red and green are checked by running the single test file under change. Full suites and the repo's gates go to a `verifier` once the slices land, not inside the loop.
+- **Run only the focused test.** Red and green are checked by running the single test file under change. Full suites and the repo's gates go to the verifier (`review-round`'s Verifier command) once the slices land, not inside the loop.
 - **Refactoring is not part of the loop.** It belongs to the review stage (see the `branch-review` skill), not the red → green implementation cycle.
