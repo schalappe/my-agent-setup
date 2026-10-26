@@ -90,7 +90,8 @@ The rules below follow from two ideas. Read them as consequences, not as a check
 - Main may run read-only checks that finish in about 30 seconds (link checks, workflow linters, `git`
   status), one focused test file, typecheck, and formatters. Gates, full test suites, browser, API, and
   container checks go to the verifier (GPT-6.1 Sol, run with `review-round`'s Verifier command) once edits
-  settle, with the exact scenarios and the evidence you expect. Don't repeat its work.
+  settle, with the exact scenarios and the evidence you expect. Don't repeat its work. Main may launch and clean
+  up the repo's `verify-<app>` stack for it, so verifiers share one launch.
 - Before a wait expected to exceed ~10 minutes, tell the user what runs, its expected end, and where
   progress shows.
 - Verify what the user does: the real UI and backend, including loading, empty, error, and permission
