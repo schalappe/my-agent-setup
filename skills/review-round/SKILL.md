@@ -95,7 +95,7 @@ Later verifications rerun only what the changes reach. The first verification of
 
 The gate accepts a carried entry only when round K is green and its verify-K.json holds a passing entry with the same command or scenario name. Otherwise the gate prints `blocked`, and the verifier runs again and reruns that entry. Print the carried entries beside the changed files, so the reader sees what was not rerun and why.
 
-When no verification is reused, run the [verifier](#verifier) once with a brief holding the absolute path of `wt` (it runs everything from there), the exact check commands, the scenarios with their expected outcomes, the entries to carry, the isolation rule above, the stack line, and this output contract: first record `git rev-parse HEAD` and `bun ~/.agents/skills/review-round/gate.ts tree`, then run everything and write `$dir/verify-N.json` (absolute path) with the observed exit codes and the wall seconds of each check and scenario. A command that did not run is not exit 0.
+When no verification is reused, run the [verifier](#verifier) once with a brief holding the absolute path of `wt` (it runs everything from there), the exact check commands, the scenarios with their expected outcomes, the entries to carry, the isolation rule above, the stack line, and this output contract: first record `git rev-parse HEAD` and `bun ~/.agents/skills/review-round/gate.ts tree`, then run everything, save every evidence file (screenshots, logs, traces) under `$p/evidence/` (absolute path) and cite those paths in the report, and write `$dir/verify-N.json` (absolute path) with the observed exit codes and the wall seconds of each check and scenario. A command that did not run is not exit 0.
 
 ```json
 {"head": "abc1234…", "tree": "9f3e…", "checks": [{"command": "bun test", "exit": 0, "seconds": 41}, {"command": "./gradlew :integration-tests:test", "exit": 0, "seconds": 1380, "carried_from": 1}], "scenarios": [{"name": "POST /orders with valid body returns 201 and creates the row", "result": "pass", "surface": "api", "seconds": 12}, {"name": "Deleting the last stock re-enables « Supprimer »", "result": "pass", "surface": "browser", "seconds": 95}, {"name": "…", "result": "blocked", "reason": "dev DB unreachable"}]}
@@ -126,7 +126,7 @@ Recompute `tree`. It must equal `tree` in `verify-N.json` (the code reviewed is 
 
 Reviewers run on GPT-6.1 Sol in a separate headless `claude -p` process: a model family other than the writer's (Claude), a fresh context with no conversation, read-only tools, and only its slice's patches. That separation is what keeps the review from sharing the writer's blind spots. `$sol` passes `--strict-mcp-config` and `--disable-slash-commands`, which keep MCP servers and skills out of its context (about 26k input tokens instead of 210k); `--json-schema` enforces the output and puts it under `structured_output`.
 
-Write the prompts: `slices=$(bun $gate slice N)`. It packs `files.txt` into slices of at most 2000 changed lines (a bigger single file is its own slice), writes two prompts per slice letter `S`, `$p/review-S.prompt` (correctness) and `$p/review-sec-S.prompt` (security, checked against the same list as the `hardening` skill), and prints their names (`A sec-A B sec-B`); the loop below runs each name as its own slice. Each prompt carries the reviewer task text, the PR body, the checks and scenarios that passed, the full `files.txt` for orientation, the findings earlier rounds rejected or recorded as pre-existing (so the reviewer does not repeat them without new evidence), and the absolute paths of that slice's patches: never the whole diff or the conversation.
+Write the prompts: `slices=$(bun $gate slice N)`. It packs `files.txt` into slices of at most 2000 changed lines (a bigger single file is its own slice), writes two prompts per slice letter `S`, `$p/review-S.prompt` (correctness) and `$p/review-sec-S.prompt` (security, checked against the same list as the `hardening` skill), and prints their names one per line (`A`, `sec-A`, `B`, `sec-B`); the loop below runs each name as its own slice. The loop reads lines rather than splitting `$slices` on spaces, because zsh does not split an unquoted variable into words. Each prompt carries the reviewer task text, the PR body, the checks and scenarios that passed, the full `files.txt` for orientation, the findings earlier rounds rejected or recorded as pre-existing (so the reviewer does not repeat them without new evidence), and the absolute paths of that slice's patches: never the whole diff or the conversation.
 
 The first reviewed round covers every file. Later rounds are re-reviews: only the files changed since the previous reviewed round, plus the files of its rejected findings, so the loop checks its own fixes instead of finding older bugs each round. No letters printed → nothing changed since the last review: skip to step 4 with `findings: 0`.
 
@@ -135,10 +135,10 @@ Then run all slices in parallel in one background shell call from the repo root 
 ```bash
 cd "$wt"
 schema=$(cat ~/.agents/skills/review-round/reviewer-schema.json)
-for S in $slices; do
+while IFS= read -r S; do
   $sol --json-schema "$schema" --tools Read,Grep,Glob --permission-prompts none \
     < "$p/review-$S.prompt" 2> "$p/review-$S.log" | jq -e .structured_output > "$p/review-$S.json" &
-done
+done <<< "$slices"
 wait
 ```
 

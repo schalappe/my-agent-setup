@@ -9,8 +9,8 @@
 // skill's verifier before the loop, has no round: the skill copies it into a round when the tree matches.
 // `gate.ts slice N` splits round N's diff into review slices of at most SLICE_LINES changed lines (a bigger single
 // file is its own slice) and writes two prompts per slice, round-N/review-<S>.prompt (correctness) and
-// review-sec-<S>.prompt (security), printing their names (`A sec-A B sec-B`). The reviewer task texts live here so
-// the prompts are the same every round. The first reviewed round covers every file; later
+// review-sec-<S>.prompt (security), printing their names one per line (`A`, `sec-A`, `B`, `sec-B`). The reviewer
+// task texts live here so the prompts are the same every round. The first reviewed round covers every file; later
 // ones re-review only the files changed since the previous reviewed round plus the files of its rejected findings,
 // so the loop converges on its own fixes instead of digging up older code. No letters printed = nothing to review.
 // Every prompt lists the findings earlier rounds rejected or recorded as pre-existing, so they are not repeated.
@@ -438,7 +438,7 @@ if (import.meta.main) {
     }
     if (process.argv[2] === "slice") {
       if (!/^\d+$/.test(process.argv[3] ?? "")) throw new Error("usage: gate.ts slice <round number>");
-      console.log((await slice(process.argv[3])).join(" "));
+      console.log((await slice(process.argv[3])).join("\n"));
       process.exit(0);
     }
     if (process.argv[2] === "verify") {
