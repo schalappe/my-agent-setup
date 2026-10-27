@@ -6,7 +6,7 @@ The `triage` skill gives each ticket one verdict label. This file maps those lab
 | ----------------- | -------------------- | -------------------------------------------------------- |
 | `needs-triage`    | `needs-triage`       | Not yet evaluated                                        |
 | `needs-info`      | `needs-info`         | Waiting on a decision or answer that changes the work    |
-| `ready-for-agent` | `ready-for-agent`    | Real and briefed, ready for an unattended coding agent   |
+| `ready-for-agent` | `ready-for-agent`    | Scouted, ready for an unattended coding agent            |
 | `wontfix`         | `wontfix`            | Will not be actioned                                     |
 
 When a skill mentions a label (e.g. "apply the agent-ready label"), use the string from the "Label in our tracker" column. Edit that column to match the vocabulary you actually use.

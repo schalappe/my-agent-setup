@@ -69,7 +69,7 @@ For each existing `docs/agents/*.md`, compare it section by section with what th
 
 Show the full diff and write only on approval. Files this skill never writes (e.g. `pr-stacks.md`) stay untouched.
 
-Tracker labels this version dropped (e.g. `ready-for-human`) go away: list the open tickets carrying each one with a proposed new label (`ready-for-agent` when briefed, else `needs-triage`), and on approval relabel them, then delete the label from the tracker and from any hand-written section of the docs.
+Remove the tracker labels this version dropped (e.g. `ready-for-human`). List the open tickets that carry each one and propose `needs-triage` as their new label, since only `/scout` grants `ready-for-agent`. On approval, relabel them, then delete the label from the tracker and from any hand-written section of the docs.
 
 ### 4. Write
 

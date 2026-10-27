@@ -17,7 +17,7 @@ Read the repo's `docs/agents/issue-tracker.md` (written by `/setup-repo`) first.
 | Verdict | Meaning | Label |
 |---|---|---|
 | fixed | Already behaves as asked, or already implemented elsewhere | close |
-| real | Reproduced, or the faulty code is pinned | `ready-for-agent` when briefed |
+| real | Reproduced, or the faulty code is pinned | set by `scout` |
 | needs-info | A decision or answer that changes the implementation is missing | `needs-info` |
 | wontfix | Out of scope, or a bug neither reproduced nor traced to code | `wontfix` + close |
 
@@ -30,7 +30,7 @@ An untriaged ticket carries `needs-triage` until it gets a verdict.
 3. **Verdict.** State it with its evidence. Each claim names its evidence type: **static** (read in code), **mocked** (test with doubles), or **live** (observed on a running system). Mocks never prove persistence. Show the verdict to the user before step 4.
 4. **Act.**
    - real and small: read `~/.agents/skills/implement/SKILL.md` and fix it by that workflow.
-   - real and too big: write the brief by calling the Skill tool with `agent-ready-issue`, post it, label `ready-for-agent`.
+   - real and too big: read `~/.agents/skills/scout/SKILL.md` and scout the ticket by that workflow. Scout writes the brief and sets the outcome label; it is the only path to `ready-for-agent`.
    - needs-info: post triage notes (below), label `needs-info`.
    - fixed or wontfix: no code change.
 5. **Close the loop** on each tracker involved: comment in that tracker's language with the verdict and its evidence (PR or commit link for a fix), assign per the repo doc, set the state or close. A real ticket fixed in this session closes only after its PR merges or the user says so.
