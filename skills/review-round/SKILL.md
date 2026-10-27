@@ -87,13 +87,21 @@ Green means the repo's checks passed and a live exercise of the change passed. T
 
 Reuse first: an earlier `$dir/verify-K.json` whose `tree` equals `$tree` and has no blocked scenario already verified this exact code → `cp` it to `$dir/verify-N.json` and skip the dispatch. `verify-0.json` is the final verification of the `implement` skill, written before the loop; it is reused under the same rule. A different tree is never reused. When `verify-0.json` exists but its tree differs, print the files that differ (`git diff --name-only <its tree> $tree`) before dispatching, so the cause of the second verification is visible.
 
-Otherwise run the [verifier](#verifier) once with a brief holding the absolute path of `wt` (it runs everything from there), the exact check commands, the scenarios with their expected outcomes, the isolation rule above, the stack line, and this output contract: first record `git rev-parse HEAD` and `bun ~/.agents/skills/review-round/gate.ts tree`, then run everything and write `$dir/verify-N.json` (absolute path) with the observed exit codes. A command that did not run is not exit 0.
+Later verifications rerun only what the changes reach. The first verification of a loop (a reused `verify-0.json` or the first dispatch) runs everything. After it, take the latest round K whose `bun $gate verify K` prints `green`. List the files changed since that round with `git diff --name-only <tree of verify-K.json> $tree`. The brief then:
+
+- reruns every check that the repo scopes by changed paths. When the check takes a base ref (for example a gate script's `--since`), the base is the `head` of verify-K.json. An older base is safe: it only reruns more checks.
+- reruns a slow suite (a full integration or E2E run, a browser campaign) and each scenario only when a changed file is on its path. Its path is the code it exercises and its fixtures or seeds. A changed build, dependency, configuration, or migration file is on every path. A check or scenario that failed or was blocked after round K always reruns. When unsure, rerun it.
+- tells the verifier to copy every other check and scenario of verify-K.json unchanged, adding `"carried_from": K`.
+
+The gate accepts a carried entry only when round K is green and its verify-K.json holds a passing entry with the same command or scenario name. Otherwise the gate prints `blocked`, and the verifier runs again and reruns that entry. Print the carried entries beside the changed files, so the reader sees what was not rerun and why.
+
+When no verification is reused, run the [verifier](#verifier) once with a brief holding the absolute path of `wt` (it runs everything from there), the exact check commands, the scenarios with their expected outcomes, the entries to carry, the isolation rule above, the stack line, and this output contract: first record `git rev-parse HEAD` and `bun ~/.agents/skills/review-round/gate.ts tree`, then run everything and write `$dir/verify-N.json` (absolute path) with the observed exit codes and the wall seconds of each check and scenario. A command that did not run is not exit 0.
 
 ```json
-{"head": "abc1234…", "tree": "9f3e…", "checks": [{"command": "bun test", "exit": 0}], "scenarios": [{"name": "POST /orders with valid body returns 201 and creates the row", "result": "pass", "surface": "api"}, {"name": "Deleting the last stock re-enables « Supprimer »", "result": "pass", "surface": "browser"}, {"name": "…", "result": "blocked", "reason": "dev DB unreachable"}]}
+{"head": "abc1234…", "tree": "9f3e…", "checks": [{"command": "bun test", "exit": 0, "seconds": 41}, {"command": "./gradlew :integration-tests:test", "exit": 0, "seconds": 1380, "carried_from": 1}], "scenarios": [{"name": "POST /orders with valid body returns 201 and creates the row", "result": "pass", "surface": "api", "seconds": 12}, {"name": "Deleting the last stock re-enables « Supprimer »", "result": "pass", "surface": "browser", "seconds": 95}, {"name": "…", "result": "blocked", "reason": "dev DB unreachable"}]}
 ```
 
-`result` is `pass`, `fail`, or `blocked`; `surface` is `browser`, `api`, or `cli`. The outcome is the line `bun $gate verify N` prints (`green`, `red`, or `blocked: <reason>`), never the agent's summary.
+`result` is `pass`, `fail`, or `blocked`; `surface` is `browser`, `api`, or `cli`; a carried entry keeps the `seconds` of the round it comes from. The outcome is the line `bun $gate verify N` prints (`green`, `red`, or `blocked: <reason>`), never the agent's summary.
 
 - Red: dispatch one general-purpose agent (Sonnet) with the absolute path of `wt` to fix only what the failing checks or scenarios require, then the verifier once more (it overwrites `verify-N.json`). Do not review code that fails its own checks. Go to step 4.
 - Blocked: unblock it with the repo's documented local setup (nearest `AGENTS.md`), then the verifier once more. When the reason is a missing browser scenario, dispatch the verifier again with one. Still blocked → skip review, go to step 4. A blocked scenario is never green.
@@ -214,4 +222,4 @@ Then print `$dir/pre-existing.md`: the bugs the PR did not introduce. Draft one 
 
 ## Measure noise
 
-`bun ~/.agents/skills/review-round/noise.ts <repo>...` reads every loop recorded in those repositories and prints, per loop and in total, the rounds, the critical and major findings, how many were rejected and why, and the pre-existing count. A high rejected share means the reviewer is noisy: tune `REVIEW_TASK` in `gate.ts` before adding steps, and rerun the script on the next loops to check the change helped.
+`bun ~/.agents/skills/review-round/noise.ts <repo>...` reads every loop recorded in those repositories and prints, per loop and in total, the rounds, the critical and major findings, how many were rejected and why, the pre-existing count, and the minutes the verifier spent running checks and scenarios. A high rejected share means the reviewer is noisy: tune `REVIEW_TASK` in `gate.ts` before adding steps, and rerun the script on the next loops to check the change helped.

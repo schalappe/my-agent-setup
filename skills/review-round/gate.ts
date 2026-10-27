@@ -16,6 +16,11 @@
 // Every prompt lists the findings earlier rounds rejected or recorded as pre-existing, so they are not repeated.
 // `gate.ts verify N` prints round N's verification outcome (`green`, `red`, or `blocked: <reason>`); the skill
 // acts on that line instead of judging verify-N.json itself.
+// After a green round K, a later verification reruns only the checks and scenarios that the changed files reach.
+// It copies the others from verify-K.json and marks each with `carried_from: K`. The gate accepts a carried entry
+// only when round K is green and verify-K.json holds a passing entry with the same command or scenario name.
+// Otherwise the round is blocked, and the skill runs the verifier again.
+// `seconds` is the wall time of a check or scenario. It is optional because older verify files lack it.
 // `gate.ts ready` decides whether the PR may leave draft once the loop stops: exit 0 when the loop converged on
 // the current tree, the minor pass ran, and the latest round left no minor finding (nits stay for the human);
 // exit 1 prints why not.
@@ -41,12 +46,9 @@ import { $ } from "bun";
 
 type Finding = { file: string; line: number; title: string; why: string };
 type Round = { head: string; tree: string; majors: Finding[] };
-type Verify = {
-  head: string;
-  tree: string;
-  checks: { command: string; exit: number }[];
-  scenarios: { name: string; result: "pass" | "fail" | "blocked"; surface?: string }[];
-};
+type Check = { command: string; exit: number; seconds?: number; carried_from?: number };
+type Scenario = { name: string; result: "pass" | "fail" | "blocked"; surface?: string; seconds?: number; carried_from?: number };
+type Verify = { head: string; tree: string; checks: Check[]; scenarios: Scenario[] };
 
 const UI_FILE = /\.(tsx|jsx|vue|svelte|css|scss|html)$/;
 const SCRIPT_FILE = /\.(ts|js|mjs)$/;
@@ -117,16 +119,25 @@ function isRound(value: unknown): value is Round {
   return isObject(value) && isString(value.head) && isString(value.tree) && Array.isArray(value.majors);
 }
 
+// seconds and carried_from may be missing. When present, seconds is zero or more and carried_from a round from 1 up.
+const timedAndCarried = (entry: Record<string, unknown>): boolean =>
+  (entry.seconds === undefined || (typeof entry.seconds === "number" && entry.seconds >= 0)) &&
+  (entry.carried_from === undefined || (Number.isInteger(entry.carried_from) && (entry.carried_from as number) >= 1));
+
 function isVerify(value: unknown): value is Verify {
   return (
     isObject(value) &&
     isString(value.head) &&
     isString(value.tree) &&
     Array.isArray(value.checks) &&
-    value.checks.every((check) => isObject(check) && isString(check.command) && Number.isInteger(check.exit)) &&
+    value.checks.every((check) => isObject(check) && isString(check.command) && Number.isInteger(check.exit) && timedAndCarried(check)) &&
     Array.isArray(value.scenarios) &&
     value.scenarios.every(
-      (scenario) => isObject(scenario) && isString(scenario.name) && ["pass", "fail", "blocked"].includes(scenario.result as string),
+      (scenario) =>
+        isObject(scenario) &&
+        isString(scenario.name) &&
+        ["pass", "fail", "blocked"].includes(scenario.result as string) &&
+        timedAndCarried(scenario),
     )
   );
 }
@@ -279,8 +290,34 @@ async function readVerify(dir: string, round: string): Promise<Outcome & { verif
   if (!(await verifyFile.exists())) throw new Error(`${dir}/${verifyName}: missing; only the verifier writes it`);
   const verify: unknown = await verifyFile.json();
   if (!isVerify(verify))
-    throw new Error(`${dir}/${verifyName}: needs head, tree, checks [{command, exit}], scenarios [{name, result: pass|fail|blocked, surface?}]`);
-  return { ...verifyResult(verify, await changesUi(`${dir}/round-${round}/files.txt`)), verify };
+    throw new Error(
+      `${dir}/${verifyName}: needs head, tree, checks [{command, exit, seconds?, carried_from?}], scenarios [{name, result: pass|fail|blocked, surface?, seconds?, carried_from?}]`,
+    );
+  const outcome = verifyResult(verify, await changesUi(`${dir}/round-${round}/files.txt`));
+  if (outcome.result !== "green") return { ...outcome, verify };
+  return { ...((await uncarried(dir, Number(round), verify)) ?? outcome), verify };
+}
+
+// Returns a blocked outcome for the first carried entry that does not pass in a green earlier round.
+// Returns undefined when every carried entry passes there.
+async function uncarried(dir: string, round: number, verify: Verify): Promise<Outcome | undefined> {
+  const carried = [
+    ...verify.checks.filter((check) => check.carried_from !== undefined).map((check) => ({ from: check.carried_from!, label: check.command })),
+    ...verify.scenarios.filter((scenario) => scenario.carried_from !== undefined).map((scenario) => ({ from: scenario.carried_from!, label: scenario.name })),
+  ];
+  const sources = new Map<number, Verify | undefined>();
+  for (const { from, label } of carried) {
+    if (!sources.has(from)) {
+      const source = from < round && existsSync(`${dir}/verify-${from}.json`) ? await readVerify(dir, String(from)) : undefined;
+      sources.set(from, source?.result === "green" ? source.verify : undefined);
+    }
+    const source = sources.get(from);
+    const passed =
+      source?.checks.some((check) => check.command === label && check.exit === 0) ||
+      source?.scenarios.some((scenario) => scenario.name === label && scenario.result === "pass");
+    if (!passed) return { result: "blocked", reason: `carried from round ${from} but not passing in a green verify-${from}.json: ${label}` };
+  }
+  return undefined;
 }
 
 function roundNames(dir: string): string[] {
