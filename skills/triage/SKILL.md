@@ -1,6 +1,6 @@
 ---
 name: triage
-description: Take a ticket from report to closed loop: check it against the code and the running app, give a verdict with evidence, fix or brief it, and comment on every tracker involved.
+description: Take a ticket from report to closed loop: check it against the code and the running app, give a verdict with evidence, scout every real ticket before any fix, and comment on every tracker involved.
 disable-model-invocation: true
 ---
 
@@ -27,10 +27,9 @@ An untriaged ticket carries `needs-triage` until it gets a verdict.
 
 1. **Read.** The full ticket: body, comments, labels, dates, and every linked ticket on every tracker. Prior triage notes count as answered questions; never re-ask them. A linked ticket that already asks the business or the reporter the open question, and awaits the answer, makes this ticket needs-info: name that ticket instead of asking again.
 2. **Check relevance.** Against the code, by domain concept rather than the ticket's wording (use `GLOSSARY.md` terms), and report where you looked. Then against the running app: the repo's `verify-<app>` skill if present, else the `verifier` agent, briefed with the exact scenario, a setup deadline (report the blocker when it passes), and a progress report before any second long wait.
-3. **Verdict.** State it with its evidence. Each claim names its evidence type: **static** (read in code), **mocked** (test with doubles), or **live** (observed on a running system). Mocks never prove persistence. Show the verdict to the user before step 4.
+3. **Verdict.** State it with its evidence. Each claim names its evidence type: **static** (read in code), **mocked** (test with doubles), or **live** (observed on a running system). Mocks never prove persistence. The verdict carries no size: scout rates it after mapping the fog. Show the verdict to the user before step 4.
 4. **Act.**
-   - real and small: read `~/.agents/skills/implement/SKILL.md` and fix it by that workflow.
-   - real and too big: read `~/.agents/skills/scout/SKILL.md` and scout the ticket by that workflow. Scout writes the brief and sets the outcome label; it is the only path to `ready-for-agent`.
+   - real: read `~/.agents/skills/scout/SKILL.md` and scout the ticket by that workflow, however small it looks. A pinned faulty line shows where the defect sits, not its **fog of war**: the other paths that share the rule, the tests that pin today's behavior, the governing text, the amounts to compute. That fog, found mid-implementation, is what turns a small ticket into review rounds and redesigns. Scout writes the brief and sets the outcome label; it is the only path to `ready-for-agent`. When scout ends at ready and the user wants the fix now, read `~/.agents/skills/implement/SKILL.md` and fix the scouted ticket by that workflow.
    - needs-info: post triage notes (below), label `needs-info`.
    - fixed or wontfix: no code change.
 5. **Close the loop** on each tracker involved: comment in that tracker's language with the verdict and its evidence (PR or commit link for a fix), assign per the repo doc, set the state or close. A real ticket fixed in this session closes only after its PR merges or the user says so.
