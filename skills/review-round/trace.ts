@@ -1,0 +1,148 @@
+// Reads the JSONL trace of one headless peer run (see peer.ts) into the facts the skills act on: the files the agent
+// opened, its final answer, how many tool calls it made, and whether it failed. Three engines write three formats,
+// told apart by their event types:
+//   claude  `claude -p --output-format stream-json`: `assistant` events with `tool_use` blocks, a final `result`.
+//   omp     `omp -p --mode json`: `tool_execution_start` events, a final `agent_end` with the messages.
+//   codex   `codex exec --json`: `item.*` events (`command_execution`, `agent_message`), `turn.completed|failed`.
+// A file counts as opened only through a whole-file read: claude's Read, omp's read, or a codex shell command whose
+// program prints files (cat, sed, nl, head, tail, …). Codex has no read tool, so its evidence is the weakest.
+
+export type Engine = "claude" | "omp" | "codex";
+
+export type Trace = {
+  engine: Engine;
+  opened: string[];
+  text: string;
+  output: unknown;
+  toolCalls: number;
+  isError: boolean;
+};
+
+type Event = Record<string, unknown>;
+
+const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
+const isString = (value: unknown): value is string => typeof value === "string";
+
+export function parseEvents(jsonl: string): Event[] {
+  return jsonl
+    .split("\n")
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line) as unknown];
+      } catch {
+        return []; // a line cut by a crash or a stray log line; the missing final event reports the failure
+      }
+    })
+    .filter(isObject);
+}
+
+export function engineOf(events: Event[]): Engine {
+  const types = new Set(events.map((event) => event.type));
+  if (types.has("thread.started") || types.has("item.completed")) return "codex";
+  if (types.has("session") || types.has("agent_end") || types.has("tool_execution_start")) return "omp";
+  return "claude";
+}
+
+// A final answer given as JSON, possibly inside a code fence. undefined when it is not JSON.
+export function parseJsonAnswer(text: string): unknown {
+  const fenced = text.trim().match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/);
+  try {
+    return JSON.parse(fenced ? fenced[1] : text);
+  } catch {
+    return undefined;
+  }
+}
+
+export function readTrace(jsonl: string): Trace {
+  const events = parseEvents(jsonl);
+  const engine = engineOf(events);
+  if (engine === "omp") return readOmp(events);
+  if (engine === "codex") return readCodex(events);
+  return readClaude(events);
+}
+
+function readClaude(events: Event[]): Trace {
+  const toolUses = events.flatMap((event) =>
+    isObject(event.message) && Array.isArray(event.message.content)
+      ? event.message.content.filter((block) => isObject(block) && block.type === "tool_use")
+      : [],
+  );
+  const opened = toolUses.flatMap((block) =>
+    block.name === "Read" && isObject(block.input) && isString(block.input.file_path) ? [block.input.file_path] : [],
+  );
+  const result = events.findLast((event) => event.type === "result");
+  const text = isString(result?.result) ? result.result : "";
+  return {
+    engine: "claude",
+    opened,
+    text,
+    output: result?.structured_output ?? parseJsonAnswer(text),
+    toolCalls: toolUses.length,
+    isError: !result || result.is_error === true,
+  };
+}
+
+// omp's read takes a selector after the path (`/repo/a.ts:1:raw`, `/repo/a.ts:40-80`); the file is the part before it.
+const ompPath = (path: string) => path.replace(/:[^/]*$/, "");
+
+function readOmp(events: Event[]): Trace {
+  const calls = events.filter((event) => event.type === "tool_execution_start");
+  const opened = calls.flatMap((call) =>
+    call.toolName === "read" && isObject(call.args) && isString(call.args.path) ? [ompPath(call.args.path)] : [],
+  );
+  const end = events.findLast((event) => event.type === "agent_end");
+  const messages = Array.isArray(end?.messages) ? end.messages.filter(isObject) : [];
+  const last = messages.findLast((message) => message.role === "assistant");
+  const content = Array.isArray(last?.content) ? last.content.filter(isObject) : [];
+  const text = content.flatMap((block) => (block.type === "text" && isString(block.text) ? [block.text] : [])).join("\n");
+  return {
+    engine: "omp",
+    opened,
+    text,
+    output: parseJsonAnswer(text),
+    toolCalls: calls.length,
+    isError: !last || last.stopReason !== "stop",
+  };
+}
+
+const READERS = new Set(["cat", "sed", "nl", "head", "tail", "bat", "awk", "less", "more"]);
+
+// Splits a shell command line into words, honoring single and double quotes. Good enough for the read commands codex
+// writes; anything it misparses only lowers the coverage the gate reports, never raises it falsely.
+function words(command: string): string[] {
+  return [...command.matchAll(/'([^']*)'|"((?:[^"\\]|\\.)*)"|(\S+)/g)].map((match) => match[1] ?? match[2] ?? match[3]);
+}
+
+// Codex wraps each command as `/bin/zsh -lc '<script>'`. The script's segments that run a file printer name the files
+// they print as their non-option words.
+function codexReads(command: string): string[] {
+  const outer = words(command);
+  const script = outer.length === 3 && outer[1] === "-lc" ? outer[2] : command;
+  return script.split(/&&|\|\||[;|\n]/).flatMap((segment) => {
+    const [program, ...args] = words(segment.trim());
+    if (!program || !READERS.has(program.split("/").at(-1) ?? "")) return [];
+    return args.filter((arg) => !arg.startsWith("-") && /[/.]/.test(arg) && !/^\d+(,\d+)?p$/.test(arg));
+  });
+}
+
+function readCodex(events: Event[]): Trace {
+  const items = events.flatMap((event) => (event.type === "item.completed" && isObject(event.item) ? [event.item] : []));
+  const commands = items.filter((item) => item.type === "command_execution");
+  const opened = commands.flatMap((item) => (item.exit_code === 0 && isString(item.command) ? codexReads(item.command) : []));
+  const answer = items.findLast((item) => item.type === "agent_message");
+  const text = isString(answer?.text) ? answer.text : "";
+  const failed = events.some((event) => event.type === "turn.failed" || event.type === "error");
+  return {
+    engine: "codex",
+    opened,
+    text,
+    output: parseJsonAnswer(text),
+    toolCalls: commands.length,
+    isError: failed || !events.some((event) => event.type === "turn.completed"),
+  };
+}
+
+// Whether the trace opened `path`: an absolute path read as is, or a repo-relative one read from the worktree.
+export const openedFile = (opened: string[], path: string): boolean =>
+  opened.some((file) => file === path || file.endsWith(`/${path}`));

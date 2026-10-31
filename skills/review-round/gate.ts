@@ -14,16 +14,18 @@
 // ones re-review only the files changed since the previous reviewed round plus the files of its rejected findings,
 // so the loop converges on its own fixes instead of digging up older code. No letters printed = nothing to review.
 // Every prompt lists the findings earlier rounds rejected or recorded as pre-existing, so they are not repeated.
-// `gate.ts reviewed N` judges each reviewer process of round N from its stream-json trace, round-N/review-<S>.jsonl:
-// it passes when the trace ends with a schema result and Reads every file of the slice (slice-<S>.txt, written by
-// `slice`), then writes review-<S>.json from that result. It prints one line per process and `rerun: <names>` for
+// `gate.ts reviewed N` judges each reviewer process of round N from its trace, round-N/review-<S>.jsonl, written by
+// peer.ts in the format of the engine that ran it (trace.ts reads all three): it passes when the trace ends with
+// well-formed findings and reads every file of the slice (slice-<S>.txt, written by `slice`), then writes
+// review-<S>.json from that result. It prints one line per process and `rerun: <names>` for
 // the failures (exit 1). The main gate refuses (exit 2) a recorded round whose reviews do not pass this check.
 // `gate.ts verify N` prints round N's verification outcome (`green`, `red`, or `blocked: <reason>`); the skill
 // acts on that line instead of judging verify-N.json itself.
 // After a green round K, a later verification reruns only the checks and scenarios that the changed files reach.
 // It copies the others from verify-K.json and marks each with `carried_from: K`. The gate accepts a carried entry
 // only when round K is green and verify-K.json holds a passing entry with the same command or scenario name.
-// Otherwise the round is blocked, and the skill runs the verifier again.
+// K may be 0: a green verify-0.json is a valid source. Otherwise the round is blocked, and the skill runs the
+// verifier again.
 // `seconds` is the wall time of a check or scenario. It is optional because older verify files lack it.
 // `gate.ts ready` decides whether the PR may leave draft once the loop stops: exit 0 when the loop converged on
 // the current tree, the minor pass ran, and the latest round left no minor finding (nits stay for the human);
@@ -47,6 +49,7 @@
 import { copyFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { $ } from "bun";
+import { openedFile, readTrace } from "./trace";
 
 type Finding = { file: string; line: number; title: string; why: string };
 type Round = { head: string; tree: string; majors: Finding[] };
@@ -123,10 +126,11 @@ function isRound(value: unknown): value is Round {
   return isObject(value) && isString(value.head) && isString(value.tree) && Array.isArray(value.majors);
 }
 
-// seconds and carried_from may be missing. When present, seconds is zero or more and carried_from a round from 1 up.
+// seconds and carried_from may be missing. When present, seconds is zero or more and carried_from a round from 0 up
+// (0 is verify-0.json, the implement skill's final verification).
 const timedAndCarried = (entry: Record<string, unknown>): boolean =>
   (entry.seconds === undefined || (typeof entry.seconds === "number" && entry.seconds >= 0)) &&
-  (entry.carried_from === undefined || (Number.isInteger(entry.carried_from) && (entry.carried_from as number) >= 1));
+  (entry.carried_from === undefined || (Number.isInteger(entry.carried_from) && (entry.carried_from as number) >= 0));
 
 function isVerify(value: unknown): value is Verify {
   return (
@@ -291,48 +295,40 @@ async function slice(round: string): Promise<string[]> {
 
 type ReviewCheck = { name: string; problem?: string; summary: string };
 
-// Judges one reviewer process from its stream-json trace, review-<name>.jsonl. A reviewer that answers without
-// opening its files can return zero findings that look exactly like a clean review, so a review counts only when
-// the trace shows a Read of every file of its slice (the patch or the source file) and ends with a schema result.
-// On success it writes review-<name>.json from that result: the trace is the only source of the findings.
+const SEVERITIES = ["critical", "major", "minor", "nit"];
+
+// The shape reviewer-schema.json asks for. claude and codex enforce the schema; omp cannot, so the gate checks it here
+// for every engine alike.
+function isFinding(value: unknown): boolean {
+  return (
+    isObject(value) &&
+    SEVERITIES.includes(value.severity as string) &&
+    ["file", "title", "why", "fix", "trigger"].every((key) => isString(value[key])) &&
+    Number.isInteger(value.line) &&
+    typeof value.pre_existing === "boolean"
+  );
+}
+
+// Judges one reviewer process from its trace, review-<name>.jsonl, written by peer.ts in its engine's format (see
+// trace.ts). A reviewer that answers without opening its files can return zero findings that look exactly like a
+// clean review, so a review counts only when the trace shows a read of every file of its slice (the patch or the
+// source file) and ends with a well-formed result. On success it writes review-<name>.json from that result: the
+// trace is the only source of the findings.
 async function judgeReview(roundDir: string, name: string): Promise<ReviewCheck> {
   const letter = name.replace(/^sec-/, "");
   const paths = (await Bun.file(`${roundDir}/slice-${letter}.txt`).text()).split("\n").filter(Boolean);
-  const trace = Bun.file(`${roundDir}/review-${name}.jsonl`);
-  if (!(await trace.exists())) return { name, problem: "no trace", summary: `${name}: no trace review-${name}.jsonl` };
-  const events = (await trace.text())
-    .split("\n")
-    .filter(Boolean)
-    .flatMap((line) => {
-      try {
-        return [JSON.parse(line) as unknown];
-      } catch {
-        return []; // a line cut by a crash; the missing result event below reports the failure
-      }
-    })
-    .filter(isObject);
-  const opened = new Set(
-    events.flatMap((event) => {
-      const content = isObject(event.message) && Array.isArray(event.message.content) ? event.message.content : [];
-      return content.flatMap((block) =>
-        isObject(block) && block.type === "tool_use" && block.name === "Read" && isObject(block.input) && isString(block.input.file_path)
-          ? [block.input.file_path]
-          : [],
-      );
-    }),
-  );
+  const traceFile = Bun.file(`${roundDir}/review-${name}.jsonl`);
+  if (!(await traceFile.exists())) return { name, problem: "no trace", summary: `${name}: no trace review-${name}.jsonl` };
+  const { engine, opened, output, toolCalls } = readTrace(await traceFile.text());
   const patchOf = (path: string) => `${roundDir}/patches/${path.replaceAll("/", "__")}.patch`;
-  const unopened = paths.filter((path) => !opened.has(patchOf(path)) && ![...opened].some((file) => file.endsWith(`/${path}`)));
-  const result = events.findLast((event) => event.type === "result");
-  const output = result?.structured_output;
-  const turns = typeof result?.num_turns === "number" ? result.num_turns : 0;
-  const coverage = `${paths.length - unopened.length}/${paths.length} files opened`;
-  if (!isObject(output) || !Array.isArray(output.findings))
-    return { name, problem: "no schema result", summary: `${name}: no schema result in the trace (${coverage}, ${turns} turns)` };
+  const unopened = paths.filter((path) => !opened.includes(patchOf(path)) && !openedFile(opened, path));
+  const coverage = `${paths.length - unopened.length}/${paths.length} files opened, ${toolCalls} tool calls, ${engine}`;
+  if (!isObject(output) || !Array.isArray(output.findings) || !output.findings.every(isFinding))
+    return { name, problem: "no schema result", summary: `${name}: no well-formed findings in the trace (${coverage})` };
   if (unopened.length > 0)
     return { name, problem: "files not opened", summary: `${name}: not reviewed, ${coverage}; never opened: ${unopened.join(", ")}` };
   await Bun.write(`${roundDir}/review-${name}.json`, `${JSON.stringify(output, null, 2)}\n`);
-  return { name, summary: `${name}: ${output.findings.length} finding(s), ${coverage}, ${turns} turns` };
+  return { name, summary: `${name}: ${output.findings.length} finding(s), ${coverage}` };
 }
 
 // Every reviewer process of a round, in prompt order. A round without prompts was not reviewed and returns [].
@@ -354,7 +350,10 @@ async function readVerify(dir: string, round: string): Promise<Outcome & { verif
     throw new Error(
       `${dir}/${verifyName}: needs head, tree, checks [{command, exit, seconds?, carried_from?}], scenarios [{name, result: pass|fail|blocked, surface?, seconds?, carried_from?}]`,
     );
-  const outcome = verifyResult(verify, await changesUi(`${dir}/round-${round}/files.txt`));
+  // verify-0.json has no round, so no files.txt. Its UI rule is not checked here: a round that carries from it is
+  // judged on its own files.txt, so a UI diff still needs a passing browser scenario there.
+  const ui = round === "0" ? false : await changesUi(`${dir}/round-${round}/files.txt`);
+  const outcome = verifyResult(verify, ui);
   if (outcome.result !== "green") return { ...outcome, verify };
   return { ...((await uncarried(dir, Number(round), verify)) ?? outcome), verify };
 }

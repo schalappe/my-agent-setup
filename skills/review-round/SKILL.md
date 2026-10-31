@@ -1,6 +1,6 @@
 ---
 name: review-round
-description: Run verify → review → fix rounds on a pull request, in its own worktree, until the review gate stops it or the round cap is hit. Claude Code only. Use when the user asks to review-loop, auto-review, or run review rounds on a PR.
+description: Run verify → review → fix rounds on a pull request, in its own worktree, until the review gate stops it or the round cap is hit. Use when the user asks to review-loop, auto-review, or run review rounds on a PR.
 argument-hint: "[#PR] [max rounds, default 5]"
 model: sonnet
 effort: medium
@@ -8,21 +8,23 @@ effort: medium
 
 # Review rounds
 
-Verify → review → fix rounds on a pull request, in Claude Code: `/review-round #42 5`. The skill runs the loop itself, so do not wrap it in `/loop`.
+Verify → review → fix rounds on a pull request: `/review-round #42 5`. The skill runs the loop itself, so do not wrap it in `/loop`. It runs in any harness with a shell (Claude Code, OMP, Codex, T3 Code): [harness.md](harness.md) maps the subagent, ask, and wait operations named here to each one.
 
 PR = the `#N` (or PR URL) given with the invocation, or else the PR of the current branch. Max rounds `M` = the bare number given, or 5: `/review-round 42` means 42 rounds on the current branch, so a PR always takes its `#`.
 
 Each loop runs in the PR branch's own worktree (a second checkout of the same repository), never in a checkout another session uses. That is what lets several loops, and other agents, run at once from the same main checkout without `git switch`.
 
-Claude writes the code; GPT-6.1 Sol, another model family, verifies and reviews it, so the checks do not share the writer's blind spots. Sol runs in headless `claude -p` processes through the local CLI Proxy: `sol=~/.agents/skills/review-round/sol.sh` sets the model; the proxy comes from `~/.claude/settings.json`. The orchestration (this file) runs on Sonnet through the frontmatter, until the end of the turn. Set every other model at the call; never rely on the session default:
+One model family writes the code; the other verifies and reviews it, so the checks do not share the writer's blind spots. The **peer** (the verifier and the reviewers) runs in headless CLI processes launched by `peer=~/.agents/skills/review-round/peer.ts`: `bun $peer --writer $writer` picks GPT-6.1 Sol when the writer is Claude, Claude Opus 5.5 when it is GPT, and the first CLI that can run it (`claude -p` through the CLI Proxy of `~/.claude/settings.json`, then `omp -p`, then `codex exec`). `writer` is the family of the model the fix subagents run on ([harness.md](harness.md#writer-family)): `claude` in Claude Code. In Claude Code, the orchestration (this file) runs on Sonnet through the frontmatter, until the end of the turn. Set every other model at the call; never rely on the session default:
 
 | Step | Model, effort | How |
 |---|---|---|
-| Verify | GPT-6.1 Sol | `$sol` with the [verifier](#verifier) prompt |
-| Fix (red) | Sonnet, medium | general-purpose agent, Agent tool `model` and `effort` |
-| Review | GPT-6.1 Sol | `$sol`, two processes per slice: correctness and security |
-| Fix (findings) | Opus, high | general-purpose agent, Agent tool `model` and `effort` |
+| Verify | the peer | `bun $peer` with the [verifier](#verifier) prompt |
+| Fix (red) | Sonnet, medium | general-purpose subagent with that model and effort |
+| Review | the peer | `bun $peer`, two processes per slice: correctness and security |
+| Fix (findings) | Opus, high | general-purpose subagent with that model and effort |
 | Same defect | TypeSafe Jev | the gate |
+
+The fix models are Claude Code's. A harness that runs GPT only (Codex) uses its strongest model for both fixes and sets `writer=gpt`; a harness that cannot set a subagent's model says so in the hand-off ([harness.md](harness.md)).
 
 Rounds share nothing but the files under `$(git rev-parse --git-common-dir)/review/<branch>/`, which every worktree shares, so state survives disposable ones. Re-resolve the context at the start of every round and do not carry findings over in memory.
 
@@ -37,9 +39,9 @@ Gate: `gate=~/.agents/skills/review-round/gate.ts`. It stops the loop when the r
   - The branch is checked out in a worktree (the current one included) → `wt` = that path. Nothing new is created.
   - Otherwise create one at the location the repo's `AGENTS.md` gives for worktrees, else at `<main-checkout>.worktrees/<branch>` beside the main checkout (outside it, so its tools and `AGENTS.md` lookup never see a second copy). `git fetch origin <branch>`; then `git worktree add "$wt" <branch>` and `git -C "$wt" merge --ff-only origin/<branch>` when the local branch exists, else `git worktree add --track -b <branch> "$wt" origin/<branch>`. The fast-forward fails → stop and say `Local <branch> has diverged from origin; reconcile it first.`
   - Install dependencies in `wt` with the repo's frozen install (e.g. `bun install --frozen-lockfile`) before the first commit: git hooks run from the worktree and fail without them.
-- `command -v claude`, `[ -n "$TYPESAFE_API_KEY" ]`, and `$sol --check` (the CLI Proxy set in `~/.claude/settings.json` is up and serves GPT-6.1 Sol). One fails → stop and say which one.
+- Set `writer` ([harness.md](harness.md#writer-family)). `command -v bun`, `[ -n "$TYPESAFE_API_KEY" ]`, and `bun $peer --writer $writer --check` (it prints the engine and model it will use, or names what each engine misses). One fails → stop and say which one.
 
-Every shell command from here on, the gate included, runs from `wt` (start each call with `cd "$wt" &&`: the shell may reset its directory between calls). Every path given to a file tool or a subagent is absolute under `wt`: file tools resolve relative paths against the main checkout.
+Every shell command from here on, the gate included, runs from `wt` (start each call with `cd "$wt" &&`: the shell may reset its directory between calls), and sets `peer` and `writer` again for the same reason. Every path given to a file tool or a subagent is absolute under `wt`: file tools resolve relative paths against the main checkout.
 
 ## Loop
 
@@ -87,7 +89,7 @@ Green means the repo's checks passed and a live exercise of the change passed. T
 
 Reuse first: an earlier `$dir/verify-K.json` whose `tree` equals `$tree` and has no blocked scenario already verified this exact code → `cp` it to `$dir/verify-N.json` and skip the dispatch. `verify-0.json` is the final verification of the `implement` skill, written before the loop; it is reused under the same rule. A different tree is never reused. When `verify-0.json` exists but its tree differs, print the files that differ (`git diff --name-only <its tree> $tree`) before dispatching, so the cause of the second verification is visible.
 
-Later verifications rerun only what the changes reach. The first verification of a loop (a reused `verify-0.json` or the first dispatch) runs everything. After it, take the latest round K whose `bun $gate verify K` prints `green`. List the files changed since that round with `git diff --name-only <tree of verify-K.json> $tree`. The brief then:
+Later verifications rerun only what the changes reach. The first verification of a loop (a reused `verify-0.json` or the first dispatch) runs everything. After it, take the latest round K whose `bun $gate verify K` prints `green`; K is 0 when only a green `verify-0.json` came before. List the files changed since that round with `git diff --name-only <tree of verify-K.json> $tree`. The brief then:
 
 - reruns every check that the repo scopes by changed paths. When the check takes a base ref (for example a gate script's `--since`), the base is the `head` of verify-K.json. An older base is safe: it only reruns more checks.
 - reruns a slow suite (a full integration or E2E run, a browser campaign) and each scenario only when a changed file is on its path. Its path is the code it exercises and its fixtures or seeds. A changed build, dependency, configuration, or migration file is on every path. A check or scenario that failed or was blocked after round K always reruns. When unsure, rerun it.
@@ -103,47 +105,46 @@ When no verification is reused, run the [verifier](#verifier) once with a brief 
 
 `result` is `pass`, `fail`, or `blocked`; `surface` is `browser`, `api`, or `cli`; a carried entry keeps the `seconds` of the round it comes from. The outcome is the line `bun $gate verify N` prints (`green`, `red`, or `blocked: <reason>`), never the agent's summary.
 
-- Red: dispatch one general-purpose agent (Sonnet) with the absolute path of `wt` to fix only what the failing checks or scenarios require, then the verifier once more (it overwrites `verify-N.json`). Do not review code that fails its own checks. Go to step 4.
+- Red: dispatch one general-purpose subagent (Sonnet, medium) with the absolute path of `wt` to fix only what the failing checks or scenarios require, then the verifier once more (it overwrites `verify-N.json`). Do not review code that fails its own checks. Go to step 4.
 - Blocked: unblock it with the repo's documented local setup (nearest `AGENTS.md`), then the verifier once more. When the reason is a missing browser scenario, dispatch the verifier again with one. Still blocked → skip review, go to step 4. A blocked scenario is never green.
 - Green: continue.
 
 ### Verifier
 
-The verifier is GPT-6.1 Sol in a headless `claude -p` process, never an Agent-tool subagent: those run on Claude, the writer's family. Write its brief to `$p/verify.brief`, then run it from `wt` in one background shell call and wait for it:
+The verifier is the peer in a headless process, never an in-session subagent: those run on the writer's family. Write its brief to `$p/verify.brief`, then run it from `wt` in one long shell call and wait for it ([harness.md](harness.md)):
 
 ```bash
 cd "$wt"
 cat ~/.agents/skills/review-round/verifier.md "$p/verify.brief" \
-  | $sol --tools Read,Grep,Glob,Bash,Write --dangerously-skip-permissions 2> "$p/verify.log" > "$p/verify.out.json"
+  | bun $peer --writer $writer --access full --trace "$p/verify.jsonl" 2> "$p/verify.log" > "$p/verify.out.json"
 jq -r .result "$p/verify.out.json"
 ```
 
-It runs without permission prompts or sandbox, like the old in-session verifier: gates, Docker, and browsers write outside `wt` (Gradle, Bun, and Playwright caches). `verifier.md` keeps it from editing sources. The printed report is for the hand-off; the verdict is still `bun $gate verify N`. A run with no report or no `verify-N.json`: rerun once, then stop and show the tail of `verify.log`.
+`--access full` runs it without permission prompts or sandbox: gates, Docker, and browsers write outside `wt` (Gradle, Bun, and Playwright caches). `verifier.md` keeps it from editing sources. The printed report is for the hand-off; the verdict is still `bun $gate verify N`. A run with no report or no `verify-N.json`: rerun once, then stop and show the tail of `verify.log`.
 
 ## 2. Review
 
 Recompute `tree`. It must equal `tree` in `verify-N.json` (the code reviewed is the code verified); otherwise re-run step 1.
 
-Reviewers run on GPT-6.1 Sol in a separate headless `claude -p` process: a model family other than the writer's (Claude), a fresh context with no conversation, read-only tools, and only its slice's patches. That separation is what keeps the review from sharing the writer's blind spots. `$sol` passes `--strict-mcp-config` and `--disable-slash-commands`, which keep MCP servers and skills out of its context (about 26k input tokens instead of 210k); `--json-schema` enforces the output and puts it under `structured_output`.
+Reviewers run on the peer in separate headless processes: a model family other than the writer's, a fresh context with no conversation, read-only tools (`--access read`), and only its slice's patches. That separation is what keeps the review from sharing the writer's blind spots. `--schema` gives the output's shape: `claude` and `codex` enforce it, and for `omp` the gate checks it.
 
 Write the prompts: `slices=$(bun $gate slice N)`. It packs `files.txt` into slices of at most 2000 changed lines (a bigger single file is its own slice), writes two prompts per slice letter `S`, `$p/review-S.prompt` (correctness) and `$p/review-sec-S.prompt` (security, checked against the same list as the `hardening` skill), and prints their names one per line (`A`, `sec-A`, `B`, `sec-B`); the loop below runs each name as its own slice. The loop reads lines rather than splitting `$slices` on spaces, because zsh does not split an unquoted variable into words. Each prompt carries the reviewer task text, the PR body, the checks and scenarios that passed, the full `files.txt` for orientation, the findings earlier rounds rejected or recorded as pre-existing (so the reviewer does not repeat them without new evidence), and the absolute paths of that slice's patches: never the whole diff or the conversation.
 
 The first reviewed round covers every file. Later rounds are re-reviews: only the files changed since the previous reviewed round, plus the files of its rejected findings, so the loop checks its own fixes instead of finding older bugs each round. No letters printed → nothing changed since the last review: skip to step 4 with `findings: 0`.
 
-Then run all slices in parallel in one background shell call from `wt` and wait for it. The patches live under the main checkout's `.git`, outside `wt`, so `--add-dir "$p"` is what lets the reviewer read them: without it every patch Read is denied and the reviewer returns zero findings it could not check.
+Then run all slices in parallel in one long shell call from `wt` and wait for it. The patches live under the main checkout's `.git`, outside `wt`, so `--add-dir "$p"` is what lets the reviewer read them: without it every patch read is denied and the reviewer returns zero findings it could not check.
 
 ```bash
 cd "$wt"
-schema=$(cat ~/.agents/skills/review-round/reviewer-schema.json)
 while IFS= read -r S; do
-  $sol --json-schema "$schema" --tools Read,Grep,Glob --permission-prompts none --add-dir "$p" --output-format stream-json --verbose \
-    < "$p/review-$S.prompt" 2> "$p/review-$S.log" > "$p/review-$S.jsonl" &
+  bun $peer --writer $writer --access read --schema ~/.agents/skills/review-round/reviewer-schema.json --add-dir "$p" \
+    --trace "$p/review-$S.jsonl" < "$p/review-$S.prompt" 2> "$p/review-$S.log" > /dev/null &
 done <<< "$slices"
 wait
 bun $gate reviewed N
 ```
 
-The trace `review-S.jsonl` is the evidence that a review happened: a reviewer that answers without opening its files returns zero findings that look exactly like a clean review. `bun $gate reviewed N` prints, per process, its findings, the share of its slice's files it opened, and its turns. Exit 0 → it wrote every `review-S.json` from the traces. Exit 1 → rerun once the processes named on its `rerun:` line (a missing trace, no schema result, or a file it never opened), then run it again. Still exit 1 → stop the loop and show those lines and the tail of each failing `review-S.log`. Print those per-process lines after the round line, so the reader sees what each reviewer read. Never review a slice yourself or through a subagent, and never write `review-S.json`: only the gate writes it, from the `claude -p` trace. Never edit a prompt: change the task text in `gate.ts`.
+The trace `review-S.jsonl` is the evidence that a review happened: a reviewer that answers without opening its files returns zero findings that look exactly like a clean review. `bun $gate reviewed N` prints, per process, its findings, the share of its slice's files it opened, its tool calls, and its engine. A `codex` reviewer has no read tool, so its opened files come from its file-printing shell commands (`cat`, `sed`, …): weaker evidence than a read tool's. Exit 0 → it wrote every `review-S.json` from the traces. Exit 1 → rerun once the processes named on its `rerun:` line (a missing trace, no schema result, or a file it never opened), then run it again. Still exit 1 → stop the loop and show those lines and the tail of each failing `review-S.log`. Print those per-process lines after the round line, so the reader sees what each reviewer read. Never review a slice yourself or through a subagent, and never write `review-S.json`: only the gate writes it, from the peer's trace. Never edit a prompt: change the task text in `gate.ts`.
 
 ## 3. Fix
 
@@ -151,7 +152,7 @@ Only `critical` and `major` findings are fixed by the loop; fixing minors every 
 
 A finding with `pre_existing: true` is a defect the PR did not introduce, whatever its severity: the loop never fixes it and it never counts toward the gate. Append each to `$dir/pre-existing.md` (file, line, severity, title, trigger, why) unless the same file and title are already there; they reach the user at the [end](#decisions).
 
-Merge the slices' findings. Dispatch one general-purpose agent (Opus, high: a wrong rejection stalls the loop and a failed fix repeats) with the absolute path of `wt` (it edits only there), the PR body, the critical and major findings, and the patch paths of the files they touch. When a finding names a pattern, the agent fixes every instance: it greps the repo for the pattern before reporting the finding fixed. For each finding it either fixes it or rejects it with a one-sentence reason (the finding is wrong, outside the diff, contradicts the PR intent, is hypothetical because no traced caller reaches that state, or is a preference with no concrete failure). A finding that hinges on a business or product rule the PR intent does not settle is rejected with a reason starting `decision:`, naming the question, its recommendation, and the evidence. It returns `{"fixed":[titles],"rejected":[{"file","line","title","reason"}]}` and does not commit.
+Merge the slices' findings. Dispatch one general-purpose subagent (Opus, high: a wrong rejection stalls the loop and a failed fix repeats) with the absolute path of `wt` (it edits only there), the PR body, the critical and major findings, and the patch paths of the files they touch. When a finding names a pattern, the agent fixes every instance: it greps the repo for the pattern before reporting the finding fixed. For each finding it either fixes it or rejects it with a one-sentence reason (the finding is wrong, outside the diff, contradicts the PR intent, is hypothetical because no traced caller reaches that state, or is a preference with no concrete failure). A finding that hinges on a business or product rule the PR intent does not settle is rejected with a reason starting `decision:`, naming the question, its recommendation, and the evidence. It returns `{"fixed":[titles],"rejected":[{"file","line","title","reason"}]}` and does not commit.
 
 Append each `decision:` rejection to `$dir/decisions.md` and keep going: decisions reach the user once, at the [end](#decisions), never as mid-run notes.
 
@@ -188,7 +189,7 @@ Round N: verify=<green|red|blocked from `bun $gate verify N`> findings=4 major=2
 Runs once per loop, when the gate first prints `converged`. `$dir/minor-pass` exists → it already ran: [hand over](#hand-over). Owners almost always ask for the minors to be fixed in the same PR, so the loop does it before handing over.
 
 1. Write `$dir/minor-pass` first, so a pass that changes nothing still counts as run. Read `minor` from the latest `round-N.json`. Empty → [hand over](#hand-over).
-2. Dispatch one general-purpose agent (Sonnet, medium) with the absolute path of `wt`, the PR body, those minor findings, and the patch paths of the files they touch. It fixes each one or rejects it under the [Fix](#3-fix) rules (including `decision:`), returns `{"fixed":[titles],"rejected":[{"file","line","title","reason"}]}`, and does not commit.
+2. Dispatch one general-purpose subagent (Sonnet, medium) with the absolute path of `wt`, the PR body, those minor findings, and the patch paths of the files they touch. It fixes each one or rejects it under the [Fix](#3-fix) rules (including `decision:`), returns `{"fixed":[titles],"rejected":[{"file","line","title","reason"}]}`, and does not commit.
 3. Nothing changed → report the rejections and [hand over](#hand-over). Otherwise commit `review: minor fixes` and push, then run one more full round (verify, review, fix, record) and `bun $gate`. That round reviews the minor fixes; its own minors go to the human.
 4. The gate's exit after that round decides as usual: exit 1 continues the loop within `M` plus that one extra round.
 
