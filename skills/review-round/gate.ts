@@ -14,6 +14,10 @@
 // ones re-review only the files changed since the previous reviewed round plus the files of its rejected findings,
 // so the loop converges on its own fixes instead of digging up older code. No letters printed = nothing to review.
 // Every prompt lists the findings earlier rounds rejected or recorded as pre-existing, so they are not repeated.
+// `gate.ts reviewed N` judges each reviewer process of round N from its stream-json trace, round-N/review-<S>.jsonl:
+// it passes when the trace ends with a schema result and Reads every file of the slice (slice-<S>.txt, written by
+// `slice`), then writes review-<S>.json from that result. It prints one line per process and `rerun: <names>` for
+// the failures (exit 1). The main gate refuses (exit 2) a recorded round whose reviews do not pass this check.
 // `gate.ts verify N` prints round N's verification outcome (`green`, `red`, or `blocked: <reason>`); the skill
 // acts on that line instead of judging verify-N.json itself.
 // After a green round K, a later verification reruns only the checks and scenarios that the changed files reach.
@@ -64,7 +68,7 @@ const FINDING_RULES = `For each finding, \`trigger\` names the input or state th
 
 Severity: critical = data loss, security, or crash on the main path; major = incorrect behavior or contract violation; minor = real but low-impact defect; nit = anything else.`;
 
-const REVIEW_TASK = `Review your slice of this pull request diff against its stated intent. Read only the patch files listed in <slice> (open surrounding source when needed). Report only defects you can point to in those patches: wrong logic, contract violations against the intent, missing error handling at trust boundaries, data loss, missing or incorrect tests for changed behavior. Security has its own reviewer. If the repository's AGENTS.md names a review checklist, apply its rules to your slice. Do not report style, naming, formatting, or hypothetical future needs. Zero findings is a valid result.
+const REVIEW_TASK = `Review your slice of this pull request diff against its stated intent. Open every patch file listed in <slice>, and surrounding source when needed: the gate rejects a review whose trace never opens one of them. Report only defects you can point to in those patches: wrong logic, contract violations against the intent, missing error handling at trust boundaries, data loss, missing or incorrect tests for changed behavior. Security has its own reviewer. If the repository's AGENTS.md names a review checklist, apply its rules to your slice. Do not report style, naming, formatting, or hypothetical future needs. Zero findings is a valid result.
 
 Also interrogate: a state-changing operation that breaks when it runs twice or after a crash halfway; a guard, retry, cast, or fallback that hides a broken invariant instead of fixing its cause; a check that reads a proxy (cache, mtime, self-report) instead of the real value. For a possible null or bad input, trace the caller before reporting it.
 
@@ -76,7 +80,7 @@ ${FINDING_RULES}`;
 
 // The security pass runs as its own reviewer on the same slices: one prompt that covers everything dilutes it.
 // The checks mirror the Verification list of the hardening skill, which governs the same code at build time.
-const SECURITY_TASK = `Review your slice of this pull request diff for security defects only. Read only the patch files listed in <slice> (open surrounding source when needed). Report a defect only when you can trace untrusted input or an unauthorized caller to the patched code; a missing control that no reachable input exercises is not a finding. Zero findings is a valid result.
+const SECURITY_TASK = `Review your slice of this pull request diff for security defects only. Open every patch file listed in <slice>, and surrounding source when needed: the gate rejects a review whose trace never opens one of them. Report a defect only when you can trace untrusted input or an unauthorized caller to the patched code; a missing control that no reachable input exercises is not a finding. Zero findings is a valid result.
 
 Check the patches against each of these:
 - Input crossing a trust boundary (request, upload, webhook, queue, third-party response, another process's arguments or files) is schema-validated at the boundary, and downstream code uses only the parsed value.
@@ -279,9 +283,66 @@ async function slice(round: string): Promise<string[]> {
     const context = `<intent>\n${intent}\n</intent>\n<checks_passed>\n${checks}\n</checks_passed>\n<scope>\n${scope}\n</scope>\n<already_judged>\n${judged || "none"}\n</already_judged>\n<files>\n${files.trim()}\n</files>\n<slice>\n${patches.join("\n")}\n</slice>\n`;
     await Bun.write(`${roundDir}/review-${name}.prompt`, `${REVIEW_TASK}\n\n${context}`);
     await Bun.write(`${roundDir}/review-sec-${name}.prompt`, `${SECURITY_TASK}\n\n${context}`);
+    await Bun.write(`${roundDir}/slice-${name}.txt`, `${paths.join("\n")}\n`);
     names.push(name, `sec-${name}`);
   }
   return names;
+}
+
+type ReviewCheck = { name: string; problem?: string; summary: string };
+
+// Judges one reviewer process from its stream-json trace, review-<name>.jsonl. A reviewer that answers without
+// opening its files can return zero findings that look exactly like a clean review, so a review counts only when
+// the trace shows a Read of every file of its slice (the patch or the source file) and ends with a schema result.
+// On success it writes review-<name>.json from that result: the trace is the only source of the findings.
+async function judgeReview(roundDir: string, name: string): Promise<ReviewCheck> {
+  const letter = name.replace(/^sec-/, "");
+  const paths = (await Bun.file(`${roundDir}/slice-${letter}.txt`).text()).split("\n").filter(Boolean);
+  const trace = Bun.file(`${roundDir}/review-${name}.jsonl`);
+  if (!(await trace.exists())) return { name, problem: "no trace", summary: `${name}: no trace review-${name}.jsonl` };
+  const events = (await trace.text())
+    .split("\n")
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line) as unknown];
+      } catch {
+        return []; // a line cut by a crash; the missing result event below reports the failure
+      }
+    })
+    .filter(isObject);
+  const opened = new Set(
+    events.flatMap((event) => {
+      const content = isObject(event.message) && Array.isArray(event.message.content) ? event.message.content : [];
+      return content.flatMap((block) =>
+        isObject(block) && block.type === "tool_use" && block.name === "Read" && isObject(block.input) && isString(block.input.file_path)
+          ? [block.input.file_path]
+          : [],
+      );
+    }),
+  );
+  const patchOf = (path: string) => `${roundDir}/patches/${path.replaceAll("/", "__")}.patch`;
+  const unopened = paths.filter((path) => !opened.has(patchOf(path)) && ![...opened].some((file) => file.endsWith(`/${path}`)));
+  const result = events.findLast((event) => event.type === "result");
+  const output = result?.structured_output;
+  const turns = typeof result?.num_turns === "number" ? result.num_turns : 0;
+  const coverage = `${paths.length - unopened.length}/${paths.length} files opened`;
+  if (!isObject(output) || !Array.isArray(output.findings))
+    return { name, problem: "no schema result", summary: `${name}: no schema result in the trace (${coverage}, ${turns} turns)` };
+  if (unopened.length > 0)
+    return { name, problem: "files not opened", summary: `${name}: not reviewed, ${coverage}; never opened: ${unopened.join(", ")}` };
+  await Bun.write(`${roundDir}/review-${name}.json`, `${JSON.stringify(output, null, 2)}\n`);
+  return { name, summary: `${name}: ${output.findings.length} finding(s), ${coverage}, ${turns} turns` };
+}
+
+// Every reviewer process of a round, in prompt order. A round without prompts was not reviewed and returns [].
+async function judgeReviews(dir: string, round: string): Promise<ReviewCheck[]> {
+  const roundDir = `${dir}/round-${round}`;
+  if (!existsSync(roundDir)) return [];
+  const names = [...new Bun.Glob("review-*.prompt").scanSync(roundDir)]
+    .map((file) => file.slice("review-".length, -".prompt".length))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  return Promise.all(names.map((name) => judgeReview(roundDir, name)));
 }
 
 async function readVerify(dir: string, round: string): Promise<Outcome & { verify: Verify }> {
@@ -337,6 +398,9 @@ async function verdict(): Promise<"converged" | "stalled" | undefined> {
       const { result, verify } = await readVerify(dir, name.slice("round-".length, -".json".length));
       if (verify.tree !== round.tree)
         throw new Error(`${name}: tree ${round.tree} was not the verified tree ${verify.tree}; re-verify before recording`);
+      const failed = (await judgeReviews(dir, name.slice("round-".length, -".json".length))).filter((review) => review.problem);
+      if (failed.length > 0)
+        throw new Error(`${name} was recorded without a proven review: ${failed.map((review) => review.summary).join("; ")}`);
       return { ...round, verify: result };
     }),
   );
@@ -446,6 +510,14 @@ if (import.meta.main) {
       const { result, reason } = await readVerify(await stateDir(), process.argv[3]);
       console.log(reason ? `${result}: ${reason}` : result);
       process.exit(0);
+    }
+    if (process.argv[2] === "reviewed") {
+      if (!/^\d+$/.test(process.argv[3] ?? "")) throw new Error("usage: gate.ts reviewed <round number>");
+      const reviews = await judgeReviews(await stateDir(), process.argv[3]);
+      for (const review of reviews) console.log(review.summary);
+      const failed = reviews.filter((review) => review.problem).map((review) => review.name);
+      if (failed.length > 0) console.log(`rerun: ${failed.join(" ")}`);
+      process.exit(failed.length > 0 ? 1 : 0);
     }
     if (process.argv[2] === "ready") {
       const reason = await notReadyReason();

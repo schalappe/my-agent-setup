@@ -130,19 +130,20 @@ Write the prompts: `slices=$(bun $gate slice N)`. It packs `files.txt` into slic
 
 The first reviewed round covers every file. Later rounds are re-reviews: only the files changed since the previous reviewed round, plus the files of its rejected findings, so the loop checks its own fixes instead of finding older bugs each round. No letters printed → nothing changed since the last review: skip to step 4 with `findings: 0`.
 
-Then run all slices in parallel in one background shell call from the repo root and wait for it:
+Then run all slices in parallel in one background shell call from `wt` and wait for it. The patches live under the main checkout's `.git`, outside `wt`, so `--add-dir "$p"` is what lets the reviewer read them: without it every patch Read is denied and the reviewer returns zero findings it could not check.
 
 ```bash
 cd "$wt"
 schema=$(cat ~/.agents/skills/review-round/reviewer-schema.json)
 while IFS= read -r S; do
-  $sol --json-schema "$schema" --tools Read,Grep,Glob --permission-prompts none \
-    < "$p/review-$S.prompt" 2> "$p/review-$S.log" | jq -e .structured_output > "$p/review-$S.json" &
+  $sol --json-schema "$schema" --tools Read,Grep,Glob --permission-prompts none --add-dir "$p" --output-format stream-json --verbose \
+    < "$p/review-$S.prompt" 2> "$p/review-$S.log" > "$p/review-$S.jsonl" &
 done <<< "$slices"
 wait
+bun $gate reviewed N
 ```
 
-A slice whose `review-S.json` is missing, `null`, or not valid JSON: rerun it once. Still failing → stop the loop and show the tail of `review-S.log`. Never review a slice yourself or through a subagent: only the `claude -p` process writes `review-S.json`. Never edit a prompt: change the task text in `gate.ts`.
+The trace `review-S.jsonl` is the evidence that a review happened: a reviewer that answers without opening its files returns zero findings that look exactly like a clean review. `bun $gate reviewed N` prints, per process, its findings, the share of its slice's files it opened, and its turns. Exit 0 → it wrote every `review-S.json` from the traces. Exit 1 → rerun once the processes named on its `rerun:` line (a missing trace, no schema result, or a file it never opened), then run it again. Still exit 1 → stop the loop and show those lines and the tail of each failing `review-S.log`. Print those per-process lines after the round line, so the reader sees what each reviewer read. Never review a slice yourself or through a subagent, and never write `review-S.json`: only the gate writes it, from the `claude -p` trace. Never edit a prompt: change the task text in `gate.ts`.
 
 ## 3. Fix
 
