@@ -21,7 +21,7 @@ Whatever the user said is the fixed point (a commit SHA, branch name, tag, `main
 
 Capture the diff command once: `git diff <fixed-point>...HEAD` (three-dot, so the comparison is against the merge-base). Also note the list of commits via `git log <fixed-point>..HEAD --oneline`.
 
-Before going further, confirm the fixed point resolves (`git rev-parse <fixed-point>`), the diff is non-empty, and `~/.agents/skills/review-round/sol.sh --check` passes (it names what is missing: the proxy, `CLI_PROXY_API_KEY`, or the model). A bad ref, an empty diff, or a missing reviewer should fail here, not inside three parallel sub-agents.
+Before going further, confirm the fixed point resolves (`git rev-parse <fixed-point>`), the diff is non-empty, and `~/.agents/skills/review-round/sol.sh --check` passes (it names what is missing: the proxy settings in `~/.claude/settings.json`, the proxy itself, or the model). A bad ref, an empty diff, or a missing reviewer should fail here, not inside three parallel sub-agents.
 
 Exclude generated files from the text diff: anything `git check-attr linguist-generated diff` marks generated or `-diff`, plus obviously generated API clients and specs. Append `':(exclude)<path>'` pathspecs to the diff command and list the excluded paths separately; reviewers check them with targeted queries (`git diff --stat`, `git grep` for a specific symbol) instead of reading them.
 

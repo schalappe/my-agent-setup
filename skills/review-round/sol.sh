@@ -7,22 +7,39 @@
 #   sol.sh --check          exits non-zero, with the reason, unless the proxy is up and serves gpt-6.1-sol
 #   sol.sh [claude args]    one headless run
 #
-# The proxy cannot forward a reasoning effort, so no `--effort` is passed. Stderr carries Claude Code's warnings
-# about the unknown model; keep it out of the JSON.
+# The proxy URL and token come from the `env` of ~/.claude/settings.json, which Claude Code applies over the
+# process environment, so this script does not set them. The proxy cannot forward a reasoning effort, so no
+# `--effort` is passed. Tool search and tool-use concurrency match the interactive `ccx` alias, the setup known to
+# work with Sol. Stderr carries Claude Code's warnings about the unknown model; keep it out of the JSON.
 set -euo pipefail
 
-proxy=http://localhost:8317
 model=gpt-6.1-sol
-: "${CLI_PROXY_API_KEY:?CLI_PROXY_API_KEY is not set}"
 
 if [[ ${1:-} == --check ]]; then
-  models=$(curl -sf -m 10 -H "Authorization: Bearer $CLI_PROXY_API_KEY" "$proxy/v1/models") \
-    || { echo "CLI Proxy does not answer on $proxy" >&2; exit 1; }
-  jq -e --arg m "$model" '.data[] | select(.id == $m)' <<<"$models" >/dev/null \
-    || { echo "CLI Proxy does not serve $model" >&2; exit 1; }
-  exit 0
+    settings=~/.claude/settings.json
+    proxy=$(jq -er '.env.ANTHROPIC_BASE_URL' "$settings") ||
+        {
+            echo "$settings sets no env.ANTHROPIC_BASE_URL" >&2
+            exit 1
+        }
+    token=$(jq -er '.env.ANTHROPIC_AUTH_TOKEN' "$settings") ||
+        {
+            echo "$settings sets no env.ANTHROPIC_AUTH_TOKEN" >&2
+            exit 1
+        }
+    models=$(curl -sf -m 10 -H "Authorization: Bearer $token" "$proxy/v1/models") ||
+        {
+            echo "CLI Proxy does not answer on $proxy" >&2
+            exit 1
+        }
+    jq -e --arg m "$model" '.data[] | select(.id == $m)' <<<"$models" >/dev/null ||
+        {
+            echo "CLI Proxy does not serve $model" >&2
+            exit 1
+        }
+    exit 0
 fi
 
-ANTHROPIC_BASE_URL=$proxy ANTHROPIC_AUTH_TOKEN=$CLI_PROXY_API_KEY ANTHROPIC_API_KEY='' \
-  exec claude -p --model "$model" --output-format json --strict-mcp-config --disable-slash-commands \
-  --no-session-persistence "$@"
+ENABLE_TOOL_SEARCH=false CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY=3 \
+    exec claude -p --model "$model" --output-format json --strict-mcp-config --disable-slash-commands \
+    --no-session-persistence "$@"

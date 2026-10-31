@@ -14,7 +14,7 @@ PR = the `#N` (or PR URL) given with the invocation, or else the PR of the curre
 
 Each loop runs in the PR branch's own worktree (a second checkout of the same repository), never in a checkout another session uses. That is what lets several loops, and other agents, run at once from the same main checkout without `git switch`.
 
-Claude writes the code; GPT-6.1 Sol, another model family, verifies and reviews it, so the checks do not share the writer's blind spots. Sol runs in headless `claude -p` processes through the local CLI Proxy: `sol=~/.agents/skills/review-round/sol.sh` sets the model and the proxy. The orchestration (this file) runs on Sonnet through the frontmatter, until the end of the turn. Set every other model at the call; never rely on the session default:
+Claude writes the code; GPT-6.1 Sol, another model family, verifies and reviews it, so the checks do not share the writer's blind spots. Sol runs in headless `claude -p` processes through the local CLI Proxy: `sol=~/.agents/skills/review-round/sol.sh` sets the model; the proxy comes from `~/.claude/settings.json`. The orchestration (this file) runs on Sonnet through the frontmatter, until the end of the turn. Set every other model at the call; never rely on the session default:
 
 | Step | Model, effort | How |
 |---|---|---|
@@ -37,7 +37,7 @@ Gate: `gate=~/.agents/skills/review-round/gate.ts`. It stops the loop when the r
   - The branch is checked out in a worktree (the current one included) → `wt` = that path. Nothing new is created.
   - Otherwise create one at the location the repo's `AGENTS.md` gives for worktrees, else at `<main-checkout>.worktrees/<branch>` beside the main checkout (outside it, so its tools and `AGENTS.md` lookup never see a second copy). `git fetch origin <branch>`; then `git worktree add "$wt" <branch>` and `git -C "$wt" merge --ff-only origin/<branch>` when the local branch exists, else `git worktree add --track -b <branch> "$wt" origin/<branch>`. The fast-forward fails → stop and say `Local <branch> has diverged from origin; reconcile it first.`
   - Install dependencies in `wt` with the repo's frozen install (e.g. `bun install --frozen-lockfile`) before the first commit: git hooks run from the worktree and fail without them.
-- `command -v claude`, `[ -n "$TYPESAFE_API_KEY" ]`, and `$sol --check` (CLI Proxy up with `CLI_PROXY_API_KEY`, serving GPT-6.1 Sol). One fails → stop and say which one.
+- `command -v claude`, `[ -n "$TYPESAFE_API_KEY" ]`, and `$sol --check` (the CLI Proxy set in `~/.claude/settings.json` is up and serves GPT-6.1 Sol). One fails → stop and say which one.
 
 Every shell command from here on, the gate included, runs from `wt` (start each call with `cd "$wt" &&`: the shell may reset its directory between calls). Every path given to a file tool or a subagent is absolute under `wt`: file tools resolve relative paths against the main checkout.
 
