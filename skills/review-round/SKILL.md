@@ -93,6 +93,7 @@ Later verifications rerun only what the changes reach. The first verification of
 
 - reruns every check that the repo scopes by changed paths. When the check takes a base ref (for example a gate script's `--since`), the base is the `head` of verify-K.json. An older base is safe: it only reruns more checks.
 - reruns a slow suite (a full integration or E2E run, a browser campaign) and each scenario only when a changed file is on its path. Its path is the code it exercises and its fixtures or seeds. A changed build, dependency, configuration, or migration file is on every path. A check or scenario that failed or was blocked after round K always reruns. When unsure, rerun it.
+- reruns a slow suite that failed by its failed classes or scenarios only (for example `scripts/gates.sh --it-tests <failed classes>`, or the Cucumber tags of the failed scenarios), unless a changed file is on the whole suite's path; the brief names the reason when it reruns the whole suite. A single red class once cost a 45 min to 3 h rerun offer, where rerunning that class took 2 min 19 s.
 - tells the verifier to copy every other check and scenario of verify-K.json unchanged, adding `"carried_from": K`.
 
 The gate accepts a carried entry only when round K is green and its verify-K.json holds a passing entry with the same command or scenario name. Otherwise the gate prints `blocked`, and the verifier runs again and reruns that entry. Print the carried entries beside the changed files, so the reader sees what was not rerun and why.
