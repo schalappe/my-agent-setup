@@ -4,7 +4,7 @@ description: "Implement one ticket, or a spec and its tickets, through implement
 disable-model-invocation: true
 ---
 
-Implement the work the user names: one ticket, or a spec whose tickets form a **task graph** (tickets with blocking relationships, so a **frontier** of unblocked tickets is always ready). One ticket is a graph of one node. Fetch each reference from the issue tracker and state its title before starting; if a reference is ambiguous, ask. The issue tracker should have been provided to you. If not, tell the user to run `/setup-repo`.
+Implement the work the user names: one ticket, or a spec whose tickets form a **task graph** (tickets with blocking relationships, so a **frontier** of unblocked tickets is always ready). One ticket is a graph of one node. The arguments are a list of issues: each parent (a spec or a lot) stands for all its open sub-issues at every depth, a closed ticket counts as done, and the union of the list is the work. There is no exclusion syntax; to leave a ticket out, list the others. Two or more tickets take the spec shape. Fetch each reference from the issue tracker and state its title before starting; if a reference is ambiguous, ask. The issue tracker should have been provided to you. If not, tell the user to run `/setup-repo`.
 
 ## The main agent is the conductor
 
@@ -20,7 +20,7 @@ It runs in any harness with a shell (Claude Code, OMP, Codex, T3 Code): [harness
 
 ## Steps
 
-1. Read the tickets and the spec, and draw the task graph. Record `git -C <main-checkout> status --porcelain` as the user's baseline.
+1. Read the tickets and the spec, and draw the task graph. On GitHub, `bun ~/.agents/skills/implement/plan-graph.ts <owner/repo> <issue>...` prints it: the open tickets with their wave, size, readiness, and native blockers. Record `git -C <main-checkout> status --porcelain` as the user's baseline.
 
 2. (optional) Dispatch an **exploration subagent** for the files and external docs the tickets need. It saves markdown notes to a directory outside the repo that every later subagent can read, so implementers spend their context on implementation.
 

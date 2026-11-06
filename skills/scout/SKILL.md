@@ -60,7 +60,7 @@ Answer each item for the ticket at hand. Search by domain concept (`GLOSSARY.md`
 - **Root cause** (bugs). Pinned with evidence, or ranked hypotheses with the evidence for each and the cheapest way to tell them apart.
 - **Tests.** Which existing tests pin today's behavior and will break or contradict the ticket; which new tests are needed, at which seam; which harness runs them, on what infrastructure, in how much wall-clock time. When acceptance is expensive, find a cheaper faithful check.
 - **Docs.** Which docs, ADRs, and examples must change with the code.
-- **Size.** List the files, migrations, tests, and gates the work touches, and rate it S, M, L, or XL. If it holds more than one outcome or more than one session of work, propose a split into tracer-bullet tickets.
+- **Size.** List the files, migrations, tests, and gates the work touches, and rate it XS, S, M, L, or XL. If it holds more than one outcome or more than one session of work, rate it XL and propose a split into tracer-bullet tickets: `/implement-plan` sends an XL ticket back here instead of planning it.
 
 Evidence labels, one per claim: **static** (read in code or docs), **mocked** (test with doubles), **live** (observed on a running system), **source** (cited from a text). Mocks never prove persistence.
 
@@ -73,7 +73,7 @@ Call the Skill tool with `agent-ready-issue` and write its template in full: the
 - Decision — who took it, when, citation
 
 ## Size and plan
-S/M/L/XL — what is touched, the order of work, the gates to run and their wall-clock cost.
+XS/S/M/L/XL — what is touched, the order of work, the gates to run and their wall-clock cost.
 
 ## Scout map (base <commit>, <date>)
 Snapshot for the implementer; re-check an area if the code there has moved since the base commit.
