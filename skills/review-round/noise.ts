@@ -4,8 +4,9 @@
 // how the loop ended, critical/major findings reported, how many the fixer rejected, and pre-existing findings.
 // The rejected share is the reviewer's noise as the fixer judged it; the reasons say which instruction to tune.
 // `verify min` is the sum of the wall seconds of the checks and scenarios that the verifier ran. It skips carried
-// entries (from a round or an earlier attempt), counts a reused verify file once, and includes the archived attempts of
-// each round, so a rerun's time shows. It prints `-` when no verify file records seconds.
+// entries (from a round or an earlier attempt), skips a reused verify file (`reused_from`, or an identical copy made
+// before that field existed), and includes the archived attempts of each round, so a rerun's time shows. It prints `-`
+// when no verify file records seconds.
 // Rounds recorded before a field existed count that field as empty.
 
 import { dirname, relative } from "node:path";
@@ -55,6 +56,7 @@ async function verifySeconds(dir: string): Promise<number | undefined> {
   let total: number | undefined;
   for (const text of texts) {
     const verify = JSON.parse(text) as Record<string, unknown>;
+    if (verify.reused_from !== undefined) continue; // its time is counted in the round that ran it
     for (const entry of [...asArray(verify.checks), ...asArray(verify.scenarios)] as Record<string, unknown>[])
       if (typeof entry.seconds === "number" && entry.carried_from === undefined && entry.carried_from_attempt === undefined) total = (total ?? 0) + entry.seconds;
   }
