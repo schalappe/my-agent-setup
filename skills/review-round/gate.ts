@@ -46,9 +46,12 @@
 // converged: ≥2 green rounds, the latest is the last round, found no critical/major finding, and its
 //   tree is the current tree.
 // stalled: a critical/major finding of the latest green round repeats one from an earlier green round
-//   (the fix failed, or the fixer rejected it and the reviewer reported it again). "Same defect" is a
-//   TypeSafe Jev judgment: fixes shift lines and the reviewer rewords titles, so file/line/title
-//   matching misses repeats. Needs TYPESAFE_API_KEY.
+//   (the fix failed, or the fixer rejected it and the reviewer reported it again). Only two kinds of pair
+//   can repeat: the same file (a failed fix), or an earlier finding the fixer rejected (a disagreement).
+//   The same pattern found in another file is a new instance: the loop goes on and the round cap bounds it.
+//   "Same defect" is a TypeSafe Jev judgment: fixes shift lines and the reviewer rewords titles, so
+//   file/line/title matching misses repeats. Needs TYPESAFE_API_KEY. The repeats behind a stall are
+//   written to stall.json and printed.
 // A status written for another tree is stale (the code changed since): it is dropped and the loop goes on.
 // Red and blocked rounds never count as passes; they always continue.
 
@@ -58,7 +61,9 @@ import { $ } from "bun";
 import { openedFile, readTrace } from "./trace";
 
 type Finding = { file: string; line: number; title: string; why: string };
-type Round = { head: string; tree: string; majors: Finding[] };
+type Round = { head: string; tree: string; majors: Finding[]; rejected?: unknown[] };
+type Earlier = { finding: Finding; round: string; rejected: boolean };
+type Repeat = { latest: Finding; earlier: Finding; round: string; probability: number };
 type Check = { command: string; exit: number; seconds?: number; carried_from?: number; carried_from_attempt?: number };
 type Scenario = {
   name: string;
@@ -457,7 +462,7 @@ async function verdict(): Promise<"converged" | "stalled" | undefined> {
       const failed = (await judgeReviews(dir, name.slice("round-".length, -".json".length))).filter((review) => review.problem);
       if (failed.length > 0)
         throw new Error(`${name} was recorded without a proven review: ${failed.map((review) => review.summary).join("; ")}`);
-      return { ...round, verify: result };
+      return { ...round, name, verify: result };
     }),
   );
 
@@ -468,6 +473,7 @@ async function verdict(): Promise<"converged" | "stalled" | undefined> {
     if (statusTree === current && (status === "converged" || status === "stalled")) return status;
     await statusFile.delete(); // stale: written for code that has changed since
   }
+  rmSync(`${dir}/stall.json`, { force: true }); // judged again below; a leftover would explain a stall that no longer holds
 
   const green = rounds.filter((round) => round.verify === "green");
   const latest = green.at(-1);
@@ -476,7 +482,20 @@ async function verdict(): Promise<"converged" | "stalled" | undefined> {
   let result: "converged" | "stalled" | undefined;
   // Converged only for the code that was reviewed; stalled is about the history, so fixes since don't matter.
   if (latest.majors.length === 0) result = latest.tree === current ? "converged" : undefined;
-  else if (await repeatsEarlier(latest.majors, green.slice(0, -1).flatMap((round) => round.majors))) result = "stalled";
+  else {
+    const earlier = green.slice(0, -1).flatMap((round) =>
+      round.majors.map((finding) => ({
+        finding,
+        round: round.name.slice("round-".length, -".json".length),
+        rejected: (round.rejected ?? []).some((r) => isObject(r) && r.file === finding.file && r.title === finding.title),
+      })),
+    );
+    const repeats = await repeatsEarlier(latest.majors, earlier);
+    if (repeats.length > 0) {
+      result = "stalled";
+      await Bun.write(`${dir}/stall.json`, `${JSON.stringify(repeats, null, 2)}\n`);
+    }
+  }
   if (result) await Bun.write(`${dir}/status`, `${result} ${current}\n`);
   return result;
 }
@@ -494,34 +513,36 @@ async function notReadyReason(): Promise<string | undefined> {
   return undefined;
 }
 
-// One Noul per (latest, earlier) pair, all in one request.
-async function repeatsEarlier(latest: Finding[], earlier: Finding[]): Promise<boolean> {
-  if (earlier.length === 0) return false;
+// A pair can repeat only when it shares a file (the fix there failed) or the earlier finding was rejected (the
+// reviewer re-raised it). The same pattern in another file is a new instance, so it never stalls the loop: an
+// earlier fix that worked where it applied is progress, and the round cap bounds the rest.
+// One Noul per candidate pair, all in one request; returns the pairs judged the same defect.
+async function repeatsEarlier(latest: Finding[], earlier: Earlier[]): Promise<Repeat[]> {
+  const pairs = latest.flatMap((finding) =>
+    earlier.filter((e) => e.rejected || e.finding.file === finding.file).map((e) => ({ latest: finding, ...e })),
+  );
+  if (pairs.length === 0) return [];
   const key = Bun.env.TYPESAFE_API_KEY;
   if (!key) throw new Error("TYPESAFE_API_KEY is not set");
 
   const questions = Object.fromEntries(
-    latest.flatMap((_, i) =>
-      earlier.map((_, j) => [
-        `${i}:${j}`,
-        {
-          type: "noul",
-          instructions: `Do \`latest[${i}]\` and \`earlier[${j}]\` report the same underlying defect in the code, even if worded differently?`,
-          criteria: {
-            true: "Same defect: fixing one would resolve the other.",
-            false: "Different defects, even when they share a file or a kind of problem.",
-          },
+    pairs.map((_, k) => [
+      `${k}`,
+      {
+        type: "noul",
+        instructions: `Do \`latest[${k}]\` and \`earlier[${k}]\` report the same underlying defect in the code, even if worded differently?`,
+        criteria: {
+          true: "Same defect: fixing one would resolve the other.",
+          false: "Different defects, even when they share a file or a kind of problem.",
         },
-      ]),
-    ),
+      },
+    ]),
   );
   // Lines drift between rounds, so only the file and the defect description are compared.
+  const pick = ({ file, title, why }: Finding) => ({ file, title, why });
   const body = JSON.stringify({
     model: "jev-latest",
-    state: {
-      latest: latest.map(({ file, title, why }) => ({ file, title, why })),
-      earlier: earlier.map(({ file, title, why }) => ({ file, title, why })),
-    },
+    state: { latest: pairs.map((pair) => pick(pair.latest)), earlier: pairs.map((pair) => pick(pair.finding)) },
     questions,
   });
 
@@ -539,14 +560,24 @@ async function repeatsEarlier(latest: Finding[], earlier: Finding[]): Promise<bo
     if (!response.ok) throw new Error(`TypeSafe ${response.status}: ${await response.text()}`);
     // Unchecked shape on purpose: every probability is type-checked just below.
     const { answers } = (await response.json()) as { answers?: Record<string, { noul?: unknown }> };
-    const probabilities = Object.values(answers ?? {}).map((answer) => answer.noul);
-    if (
-      probabilities.length !== Object.keys(questions).length ||
-      !probabilities.every((probability): probability is number => typeof probability === "number")
-    )
+    // Read by key, not by order: answers is an object and its key order is the server's.
+    const probabilities = pairs.map((_, k) => answers?.[`${k}`]?.noul);
+    if (!probabilities.every((probability): probability is number => typeof probability === "number"))
       throw new Error(`unexpected TypeSafe answers: ${JSON.stringify(answers)}`);
-    return probabilities.some((probability) => probability >= SAME_DEFECT);
+    return pairs
+      .map((pair, k) => ({ latest: pair.latest, earlier: pair.finding, round: pair.round, probability: probabilities[k] }))
+      .filter((repeat) => repeat.probability >= SAME_DEFECT);
   }
+}
+
+// The pairs behind a stall, so the reader sees which findings repeated without asking. A status reused from an
+// earlier run of the gate prints the stall.json that run wrote.
+async function printRepeats(): Promise<void> {
+  const file = Bun.file(`${await stateDir()}/stall.json`);
+  if (!(await file.exists())) return;
+  const repeats = (await file.json()) as Repeat[];
+  for (const r of repeats)
+    console.log(`  repeat ${r.probability.toFixed(2)}: ${r.latest.file}: ${r.latest.title} ≈ round ${r.round}: ${r.earlier.title}`);
 }
 
 // Guarded so `packSlices` can be imported without running the gate.
@@ -588,6 +619,7 @@ if (import.meta.main) {
     const result = await verdict();
     if (!result) process.exit(1);
     console.log(`review loop: ${result}`);
+    if (result === "stalled") await printRepeats();
     process.exit(0);
   } catch (error) {
     // Exit 1 would mean "continue": any failure must surface as a broken gate instead.

@@ -28,7 +28,7 @@ The fix models are Claude Code's. A harness that runs GPT only (Codex) uses its 
 
 Rounds share nothing but the files under `$(git rev-parse --git-common-dir)/review/<branch>/`, which every worktree shares, so state survives disposable ones. Re-resolve the context at the start of every round and do not carry findings over in memory.
 
-Gate: `gate=~/.agents/skills/review-round/gate.ts`. It stops the loop when the rounds are `converged` (two or more green rounds and the latest, run on the current code, found no critical or major issue) or `stalled` (a critical or major finding of the latest green round repeats one from an earlier green round). Red and blocked rounds never count. "Same defect" is judged by TypeSafe Jev, since fixes shift lines and titles get reworded, so the gate needs `TYPESAFE_API_KEY`. Only a converged loop whose last round left no minor finding marks the PR ready ([hand over](#hand-over)).
+Gate: `gate=~/.agents/skills/review-round/gate.ts`. It stops the loop when the rounds are `converged` (two or more green rounds and the latest, run on the current code, found no critical or major issue) or `stalled` (a critical or major finding of the latest green round repeats one from an earlier green round, in the same file or after the fixer rejected it; the same pattern found in another file is a new instance and the loop goes on). The gate prints the repeated pairs and writes them to `$dir/stall.json`. Red and blocked rounds never count. "Same defect" is judged by TypeSafe Jev, since fixes shift lines and titles get reworded, so the gate needs `TYPESAFE_API_KEY`. Only a converged loop whose last round left no minor finding marks the PR ready ([hand over](#hand-over)).
 
 ## Preflight (once)
 
