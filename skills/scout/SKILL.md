@@ -84,3 +84,5 @@ Snapshot for the implementer; re-check an area if the code there has moved since
 ```
 
 The **Scout map** is the one place in the ticket where file paths and test names belong: it is a dated snapshot, while the template above it stays true after a refactor.
+
+The gates in **Size and plan** run every test the Scout map lists as pinning today's behavior. A pinned test that no gate runs is marked `not gated` in the Scout map, with the reason. Implementers and verifiers run the gates, not the map, so a pinned test left out of them silently goes unrun.
