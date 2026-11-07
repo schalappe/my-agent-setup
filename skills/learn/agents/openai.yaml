@@ -1,0 +1,5 @@
+interface:
+  display_name: "Learn"
+  short_description: "Learn a topic by practice, spaced reviews, and debate"
+policy:
+  allow_implicit_invocation: false
