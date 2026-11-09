@@ -78,7 +78,7 @@ Green means the repo's checks passed and a live exercise of the change passed. T
 1. Checks: find the repo's check commands (nearest `AGENTS.md`, package scripts, `Makefile`, `justfile`, CI config). None anywhere → the verify file has no checks, and the live exercise alone decides.
 2. Live exercise: from the PR intent and the diff, write 2–5 concrete scenarios, each with an expected observable outcome:
    - API or backend: start the real service against its real dev database, send real requests, assert responses and DB state.
-   - UI: open the real page in the session's browser, perform the user actions, assert what appears or changes. Every diff that changes a hand-written UI file needs at least one such scenario; the gate refuses green without it, so such a PR never leaves draft without browser evidence.
+   - UI: open the real page in the session's browser, perform the user actions, assert what appears or changes. Every diff that changes a hand-written UI file (a component, a style, or a script a component imports, directly or not) needs at least one such scenario; the gate refuses green without it, so such a PR never leaves draft without browser evidence.
    - CLI or library: run the real command or a throwaway script on the changed path and assert output.
    The repo has a `verify-<app>` skill (`.agents/skills/` or `.claude/skills/`) → the scenarios use its Launch and Drive recipes, and the verifier brief names its path.
    Skip the exercise only when nothing in the diff changes what executes (docs, comments, tests only). Config, env, migrations, feature flags, and build settings do change it. State the reason for any skip in the brief.
