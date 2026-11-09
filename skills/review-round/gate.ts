@@ -55,8 +55,8 @@
 // `carried_from_attempt: A`; the gate accepts one only when that attempt holds the same tree and a passing entry with
 // the same name: identical code gives the same result, so a blocked scenario no longer reruns a build that passed.
 // A round whose files.txt lists a non-test, non-generated UI file (tsx, jsx, vue, svelte, css, scss, html, or a
-// .ts/.js file in a package that depends on a UI framework) is green only with a passing scenario whose `surface` is
-// "browser": unit tests and API calls never prove a screen. Generated files (isGenerated) leave this rule and the
+// .ts/.js file that a component imports, directly or not; ui.ts holds the rule) is green only with a passing scenario
+// whose `surface` is "browser": unit tests and API calls never prove a screen. Generated files (isGenerated) leave this rule and the
 // review slices: nobody writes them by hand.
 //
 // Review. `slice N` packs round N's diff into slices of at most SLICE_LINES changed lines (a bigger single file is its
@@ -90,6 +90,7 @@ import { constants as osConstants, tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
 import { $ } from "bun";
 import { openedFile, readTrace } from "./trace";
+import { isUiFile, TEST_FILE } from "./ui";
 
 type Finding = { file: string; line: number; title: string; why: string };
 type Round = { head: string; tree: string; majors: Finding[]; rejected?: unknown[] };
@@ -106,10 +107,6 @@ type Rejection = { file: string; line?: number; title: string; reason: string };
 type Fix = { fixed: string[]; rejected: Rejection[] };
 type RecordedFindings = { findings: number; majors: unknown[]; minor: unknown[]; pre_existing: unknown[] };
 
-const UI_FILE = /\.(tsx|jsx|vue|svelte|css|scss|html)$/;
-const SCRIPT_FILE = /\.(ts|js|mjs)$/;
-const TEST_FILE = /(\.(test|spec)\.|(^|\/)(e2e|__tests__|tests?)\/)/;
-const UI_FRAMEWORKS = ["react", "vue", "svelte", "solid-js", "preact", "@angular/core"];
 const LOCKFILES = new Set([
   "bun.lock", "bun.lockb", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "uv.lock",
   "poetry.lock", "Pipfile.lock", "Cargo.lock", "Gemfile.lock", "composer.lock", "go.sum", "flake.lock", "gradle.lockfile",
@@ -275,19 +272,6 @@ async function generatedPaths(root: string, paths: string[]): Promise<Set<string
   return generated;
 }
 
-// A plain .ts/.js file is UI code when its nearest package.json depends on a UI framework: a shared hook or
-// read-state helper changes every screen that uses it.
-async function inUiPackage(root: string, path: string): Promise<boolean> {
-  for (let dir = path.split("/").slice(0, -1); ; dir.pop()) {
-    const manifest = Bun.file(`${root}/${[...dir, "package.json"].join("/")}`);
-    if (await manifest.exists()) {
-      const { dependencies = {}, devDependencies = {} } = await manifest.json();
-      return UI_FRAMEWORKS.some((name) => name in dependencies || name in devDependencies);
-    }
-    if (dir.length === 0) return false;
-  }
-}
-
 // files.txt is `git diff --numstat`: added<TAB>removed<TAB>path.
 async function changesUi(filesTxt: string): Promise<boolean> {
   const file = Bun.file(filesTxt);
@@ -297,7 +281,7 @@ async function changesUi(filesTxt: string): Promise<boolean> {
   const generated = await generatedPaths(root, paths);
   for (const path of paths) {
     if (generated.has(path)) continue;
-    if (UI_FILE.test(path) || (SCRIPT_FILE.test(path) && (await inUiPackage(root, path)))) return true;
+    if (await isUiFile(root, path)) return true;
   }
   return false;
 }
