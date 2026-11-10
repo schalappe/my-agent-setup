@@ -452,8 +452,8 @@ type ReviewCheck = { name: string; problem?: string; summary: string };
 
 const SEVERITIES = ["critical", "major", "minor", "nit"];
 
-// The shape reviewer-schema.json asks for. claude and codex enforce the schema; omp cannot, so the gate checks it here
-// for every engine alike.
+// The shape reviewer-schema.json asks for. Both engines enforce the schema, but the answer is still model output, so
+// the gate checks it here before it records a finding.
 function isFinding(value: unknown): value is ReviewFinding {
   return (
     isObject(value) &&

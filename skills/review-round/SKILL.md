@@ -8,13 +8,13 @@ effort: medium
 
 # Review rounds
 
-Verify → review → fix rounds on a pull request: `/review-round #42 5`. The skill runs the loop itself, so do not wrap it in `/loop`. It runs in any harness with a shell (Claude Code, OMP, Codex, T3 Code): [harness.md](harness.md) maps the subagent, ask, and wait operations named here to each one.
+Verify → review → fix rounds on a pull request: `/review-round #42 5`. The skill runs the loop itself, so do not wrap it in `/loop`. It runs in Claude Code or Codex, directly or under T3 Code: [harness.md](harness.md) maps the subagent, ask, and wait operations named here to each one.
 
 PR = the `#N` (or PR URL) given with the invocation, or else the PR of the current branch. Max rounds `M` = the bare number given, or 5: `/review-round 42` means 42 rounds on the current branch, so a PR always takes its `#`.
 
 Each loop runs in the PR branch's own worktree (a second checkout of the same repository), never in a checkout another session uses. That is what lets several loops, and other agents, run at once from the same main checkout without `git switch`.
 
-One model family writes the code; the other verifies and reviews it, so the checks do not share the writer's blind spots. The **peer** (the verifier and the reviewers) runs in headless CLI processes launched by `peer=~/.agents/skills/review-round/peer.ts`: `bun $peer --writer $writer` picks GPT-6.1 Sol when the writer is Claude, Claude Opus 5.5 when it is GPT, and the first CLI that can run it (`claude -p` through the CLI Proxy of `~/.claude/settings.json`, then `omp -p`, then `codex exec`). `writer` is the family of the model the fix subagents run on ([harness.md](harness.md#writer-family)): `claude` in Claude Code. In Claude Code, the orchestration (this file) runs on Sonnet through the frontmatter, until the end of the turn. Set every other model at the call; never rely on the session default:
+One model family writes the code; the other verifies and reviews it, so the checks do not share the writer's blind spots. The **peer** (the verifier and the reviewers) runs in headless CLI processes launched by `peer=~/.agents/skills/review-round/peer.ts`: The fix subagents run on the session's provider, so the writer is the session's family, and `bun $peer` detects it: in Claude Code the peer is GPT-6.1 Sol through `codex exec`, in Codex it is Claude Opus 5.5 through `claude -p` ([harness.md](harness.md#writer-family)). In Claude Code, the orchestration (this file) runs on Sonnet through the frontmatter, until the end of the turn. Set every other model at the call; never rely on the session default:
 
 | Step | Model, effort | How |
 |---|---|---|
@@ -24,7 +24,7 @@ One model family writes the code; the other verifies and reviews it, so the chec
 | Fix (findings) | Opus, high | general-purpose subagent with that model and effort |
 | Same defect | TypeSafe Jev | the gate |
 
-The fix models are Claude Code's. A harness that runs GPT only (Codex) uses its strongest model for both fixes and sets `writer=gpt`; a harness that cannot set a subagent's model says so in the hand-off ([harness.md](harness.md)).
+The fix models are Claude Code's. In Codex, every Sonnet or Opus named in this file reads as the session's model at the same effort, set at the `spawn_agent` call ([harness.md](harness.md)). A Codex thread runs in full access: its sandbox blocks the peer's network.
 
 Every fixer brief (red fix, findings fix, minor pass) says: run long checks in the foreground and return only after they finish, with their exit codes; return code that compiles. Its answer is `{"fixed":[titles],"rejected":[{"file","line","title","reason"}]}`; save the red and findings fixers' answers to `$p/fix.json` for [record](#4-record).
 
@@ -42,9 +42,10 @@ Gate: `gate=~/.agents/skills/review-round/gate.ts`; its header documents every c
   - Otherwise create one at the location the repo's `AGENTS.md` gives for worktrees, else at `<main-checkout>.worktrees/<branch>` beside the main checkout (outside it, so its tools and `AGENTS.md` lookup never see a second copy). `git fetch origin <branch>`; then `git worktree add "$wt" <branch>` and `git -C "$wt" merge --ff-only origin/<branch>` when the local branch exists, else `git worktree add --track -b <branch> "$wt" origin/<branch>`. The fast-forward fails → stop and say `Local <branch> has diverged from origin; reconcile it first.`
   - Record who made it, for the [hand over](#hand-over): `dir` as in [Resolve context](#resolve-context-every-round), `mkdir -p "$dir"`, then `echo created > "$dir/worktree-created"` when the loop created it, else `[ -f "$dir/worktree-created" ] || echo existing > "$dir/worktree-created"`.
   - In `wt`: the repo's frozen install (e.g. `bun install --frozen-lockfile`) before the first commit, since git hooks run from the worktree and fail without it; then the bootstrap the repo documents for a fresh checkout (codegen, the local env files its `AGENTS.md` lists), since a stale generated client or a missing `.env` turns the first verification red.
-- Set `writer` ([harness.md](harness.md#writer-family)). `command -v bun`, `[ -n "$TYPESAFE_API_KEY" ]`, and `bun $peer --writer $writer --check` (it prints the engine and model it will use, or names what each engine misses). One fails → stop and say which one.
+- `command -v bun`, `[ -n "$TYPESAFE_API_KEY" ]`, and `bun $peer --check` (one short real run of the peer: it prints the engine and model, or what failed). One fails → stop and say which one.
+- Under T3 Code, link the PR to the thread with `link_pull_request`: the loop pushes to it.
 
-Every shell command from here on, the gate included, runs from `wt` (start each call with `cd "$wt" &&`: the shell may reset its directory between calls), and sets `peer`, `gate`, `writer`, `dir`, `N`, and `p` again for the same reason. Every path given to a file tool or a subagent is absolute under `wt`: file tools resolve relative paths against the main checkout.
+Every shell command from here on, the gate included, runs from `wt` (start each call with `cd "$wt" &&`: the shell may reset its directory between calls), and sets `peer`, `gate`, `dir`, `N`, and `p` again for the same reason. Every path given to a file tool or a subagent is absolute under `wt`: file tools resolve relative paths against the main checkout.
 
 ## Loop
 
@@ -78,7 +79,7 @@ Green means the repo's checks passed and a live exercise of the change passed. T
 1. Checks: find the repo's check commands (nearest `AGENTS.md`, package scripts, `Makefile`, `justfile`, CI config). None anywhere → the verify file has no checks, and the live exercise alone decides.
 2. Live exercise: from the PR intent and the diff, write 2–5 concrete scenarios, each with an expected observable outcome:
    - API or backend: start the real service against its real dev database, send real requests, assert responses and DB state.
-   - UI: open the real page in the session's browser, perform the user actions, assert what appears or changes. Every diff that changes a hand-written UI file (a component, a style, or a script a component imports, directly or not) needs at least one such scenario; the gate refuses green without it, so such a PR never leaves draft without browser evidence.
+   - UI: open the real page in a real browser (the verifier drives it with Playwright, [verifier.md](verifier.md)), perform the user actions, assert what appears or changes. Every diff that changes a hand-written UI file (a component, a style, or a script a component imports, directly or not) needs at least one such scenario; the gate refuses green without it, so such a PR never leaves draft without browser evidence.
    - CLI or library: run the real command or a throwaway script on the changed path and assert output.
    The repo has a `verify-<app>` skill (`.agents/skills/` or `.claude/skills/`) → the scenarios use its Launch and Drive recipes, and the verifier brief names its path.
    Skip the exercise only when nothing in the diff changes what executes (docs, comments, tests only). Config, env, migrations, feature flags, and build settings do change it. State the reason for any skip in the brief.
@@ -118,7 +119,7 @@ The verifier is the peer in a headless process, never an in-session subagent: th
 ```bash
 cd "$wt"
 cat ~/.agents/skills/review-round/verifier.md "$p/verify.brief" \
-  | bun $peer --writer $writer --access full --trace "$p/verify.jsonl" 2> "$p/verify.log" > "$p/verify.out.json"
+  | bun $peer --access full --trace "$p/verify.jsonl" 2> "$p/verify.log" > "$p/verify.out.json"
 jq -r .result "$p/verify.out.json"
 ```
 
@@ -128,7 +129,7 @@ jq -r .result "$p/verify.out.json"
 
 Recompute `tree`. It must equal `tree` in `verify-N.json` (the code reviewed is the code verified); otherwise re-run step 1.
 
-Reviewers run on the peer in separate headless processes: a model family other than the writer's, a fresh context with no conversation, read-only tools (`--access read`), and only its slice's patches. That separation is what keeps the review from sharing the writer's blind spots. `--schema` gives the output's shape: `claude` and `codex` enforce it, and for `omp` the gate checks it.
+Reviewers run on the peer in separate headless processes: a model family other than the writer's, a fresh context with no conversation, read-only tools (`--access read`), and only its slice's patches. That separation is what keeps the review from sharing the writer's blind spots. `--schema` gives the output's shape: both engines enforce it, and the gate checks it again.
 
 Write the prompts: `slices=$(bun $gate slice $N)`. It packs `files.txt` into slices of at most 2000 changed lines (a bigger single file is its own slice), writes two prompts per slice letter `S`, `$p/review-S.prompt` (correctness) and `$p/review-sec-S.prompt` (security, checked against the same list as the `hardening` skill), and prints their names one per line (`A`, `sec-A`, `B`, `sec-B`); the loop below runs each name as its own process. The loop reads lines rather than splitting `$slices` on spaces, because zsh does not split an unquoted variable into words. Each prompt carries the reviewer task text, the PR body, the checks and scenarios that passed, the full `files.txt` for orientation, the generated files (lockfiles, generated clients), listed as generated and not reviewed, the findings earlier rounds rejected or recorded as pre-existing (so the reviewer does not repeat them without new evidence), and the absolute paths of that slice's patches: never the whole diff or the conversation.
 
@@ -140,7 +141,7 @@ Then run the processes 8 at a time in one long shell call from `wt` and wait for
 cd "$wt"
 i=0
 while IFS= read -r S; do
-  bun $peer --writer $writer --access read --schema ~/.agents/skills/review-round/reviewer-schema.json --add-dir "$p" \
+  bun $peer --access read --schema ~/.agents/skills/review-round/reviewer-schema.json --add-dir "$p" \
     --trace "$p/review-$S.jsonl" < "$p/review-$S.prompt" 2> "$p/review-$S.log" > /dev/null &
   i=$((i + 1)); [ $((i % 8)) -eq 0 ] && wait
 done <<< "$slices"
@@ -194,7 +195,7 @@ Runs when the loop stops after `converged`. A stalled, capped, or broken loop ne
    Act only on the answer.
 5. Merge, when chosen:
    - `gh pr view <number> --json mergeable` reads `CONFLICTING` → in `wt`, `git merge origin/<base>`, resolve only the conflicting files (regenerate a generated one with the repo's command instead of merging it by hand), commit, and push. Then verify once more as the next round (`round`, `prepare`, a brief limited to the checks and scenarios the resolution touched, the verifier): `bun $gate verify <that round>` must print green, else stop and report it.
-   - Wait for the PR checks ([harness.md](harness.md)). Failing → stop and report them.
+   - Wait for the PR checks ([harness.md](harness.md)); under T3 Code the wait ends the turn and the wake resumes at this step. Failing → stop and report them.
    - Read `head=$(git -C "$wt" rev-parse HEAD)`, then take the [worktree](#worktree) step, since the merge deletes the branch. From the main checkout, with the worktree removed: `gh pr merge <number> --squash --delete-branch --match-head-commit "$head"`. With it kept (it still holds the local branch): `gh pr merge <number> --squash --match-head-commit "$head"`, then `git push origin --delete <branch>`. Then `git pull --ff-only` in the main checkout when it is on the base branch.
    - On each issue the PR closed (`gh pr view <number> --json closingIssuesReferences`), comment what changed and how it was verified (the last `verify` line, its checks, and its scenarios).
 6. File the issues, when chosen, with `gh issue create`.

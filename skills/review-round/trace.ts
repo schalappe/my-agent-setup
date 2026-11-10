@@ -1,13 +1,12 @@
 // Reads the JSONL trace of one headless peer run (see peer.ts) into the facts the skills act on: the files the agent
-// opened, its final answer, how many tool calls it made, and whether it failed. Three engines write three formats,
-// told apart by their event types:
+// opened, its final answer, how many tool calls it made, and whether it failed. Two engines write two formats, told
+// apart by their event types:
 //   claude  `claude -p --output-format stream-json`: `assistant` events with `tool_use` blocks, a final `result`.
-//   omp     `omp -p --mode json`: `tool_execution_start` events, a final `agent_end` with the messages.
 //   codex   `codex exec --json`: `item.*` events (`command_execution`, `agent_message`), `turn.completed|failed`.
-// A file counts as opened only through a whole-file read: claude's Read, omp's read, or a codex shell command whose
-// program prints files (cat, sed, nl, head, tail, …). Codex has no read tool, so its evidence is the weakest.
+// A file counts as opened only through a whole-file read: claude's Read, or a codex shell command whose program
+// prints files (cat, sed, nl, head, tail, …). Codex has no read tool, so its evidence is the weaker.
 
-export type Engine = "claude" | "omp" | "codex";
+export type Engine = "claude" | "codex";
 
 export type Trace = {
   engine: Engine;
@@ -39,9 +38,7 @@ export function parseEvents(jsonl: string): Event[] {
 
 export function engineOf(events: Event[]): Engine {
   const types = new Set(events.map((event) => event.type));
-  if (types.has("thread.started") || types.has("item.completed")) return "codex";
-  if (types.has("session") || types.has("agent_end") || types.has("tool_execution_start")) return "omp";
-  return "claude";
+  return types.has("thread.started") || types.has("item.completed") ? "codex" : "claude";
 }
 
 // A final answer given as JSON, possibly inside a code fence. undefined when it is not JSON.
@@ -56,10 +53,7 @@ export function parseJsonAnswer(text: string): unknown {
 
 export function readTrace(jsonl: string): Trace {
   const events = parseEvents(jsonl);
-  const engine = engineOf(events);
-  if (engine === "omp") return readOmp(events);
-  if (engine === "codex") return readCodex(events);
-  return readClaude(events);
+  return engineOf(events) === "codex" ? readCodex(events) : readClaude(events);
 }
 
 function readClaude(events: Event[]): Trace {
@@ -80,29 +74,6 @@ function readClaude(events: Event[]): Trace {
     output: result?.structured_output ?? parseJsonAnswer(text),
     toolCalls: toolUses.length,
     isError: !result || result.is_error === true,
-  };
-}
-
-// omp's read takes a selector after the path (`/repo/a.ts:1:raw`, `/repo/a.ts:40-80`); the file is the part before it.
-const ompPath = (path: string) => path.replace(/:[^/]*$/, "");
-
-function readOmp(events: Event[]): Trace {
-  const calls = events.filter((event) => event.type === "tool_execution_start");
-  const opened = calls.flatMap((call) =>
-    call.toolName === "read" && isObject(call.args) && isString(call.args.path) ? [ompPath(call.args.path)] : [],
-  );
-  const end = events.findLast((event) => event.type === "agent_end");
-  const messages = Array.isArray(end?.messages) ? end.messages.filter(isObject) : [];
-  const last = messages.findLast((message) => message.role === "assistant");
-  const content = Array.isArray(last?.content) ? last.content.filter(isObject) : [];
-  const text = content.flatMap((block) => (block.type === "text" && isString(block.text) ? [block.text] : [])).join("\n");
-  return {
-    engine: "omp",
-    opened,
-    text,
-    output: parseJsonAnswer(text),
-    toolCalls: calls.length,
-    isError: !last || last.stopReason !== "stop",
   };
 }
 

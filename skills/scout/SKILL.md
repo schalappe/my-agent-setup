@@ -13,7 +13,7 @@ Scout is the only path to `ready-for-agent`. It takes any open ticket, whatever 
 
 ## Model
 
-Scout runs only on Claude Fable 5.1, in every harness. Claude Code switches to it through the `model` frontmatter when the skill runs through its Skill tool. Every other path ignores that field and runs the session model: OMP, Codex, and T3 Code, whose `$scout` pastes this file into the prompt even on Claude Code. Before step 1, check the model your system prompt names. If it is not Claude Fable 5.1, stop: change nothing on any tracker and tell the user to rerun scout on Fable 5.1 (`/model` in Claude Code, `--model` or Ctrl+P in OMP, the thread's model picker in T3 Code). Codex cannot run Fable, so scout does not run there.
+Scout runs only on Claude Fable 5.1, in every harness. Claude Code switches to it through the `model` frontmatter when the skill runs through its Skill tool. Every other path ignores that field and runs the session model: Codex, and T3 Code, whose `$scout` pastes this file into the prompt even on Claude Code. Before step 1, check the model your system prompt names. If it is not Claude Fable 5.1, stop: change nothing on any tracker and tell the user to rerun scout on Fable 5.1 (`/model` in Claude Code, the thread's model picker in T3 Code). Codex cannot run Fable, so scout does not run there.
 
 ## Trackers
 
