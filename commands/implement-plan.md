@@ -13,13 +13,13 @@ The plan is executed with the `implement` skill. Read `~/.agents/skills/implemen
 2. **Readiness.** A plan needs the fog of war cleared first: only `ready-for-agent` tickets sized XS, S, M, or L can be implemented (the script's `ready` column says `yes`). An XL ticket goes back to `/scout #<n>` to be split, and so does a ticket with no size. List every other ticket with its reason and the next step (`/scout #<n>`), and drop it from the plan along with every ticket it holds (the script's `held by` column).
 3. **Hidden coupling.** Blocking edges miss conflicts. Explore the code lightly to see what each ticket touches: shared modules, database migrations, lockfiles, generated files, shared config, the same UI screen. Two tickets with no edge but the same hot spot are coupled.
 4. **Order.** Take the waves from the script: wave 1 is the frontier, each later wave is unblocked by the earlier ones.
-5. **Group into runs.** A run holds **at most two tickets of size L**, plus any number of XS, S, and M tickets. Cut the graph so each run depends only on itself and on earlier runs, and keep coupled tickets in the same run when the budget allows. A run that depends on another starts after that run's PR is merged into the base. Run two groups in parallel sessions only when they share no edge and no hot spot: each parallel run costs its own `branch-review`, its own peer verifier (`review-round`'s `peer.ts`), and its own app stack on the ports the repo assigns to a parallel session.
+5. **Group into runs.** A run holds **at most 8 points**: XS and S count 1, M counts 2, L counts 4. Size alone does not bound a run, because every ticket lands in the same review, the same verifier pass, and the same PR: five M tickets weigh more than two L. Cut the graph so each run depends only on itself and on earlier runs, and keep coupled tickets in the same run when the budget allows. A run that depends on another starts after that run's PR is merged into the base. Run two groups in parallel sessions only when they share no edge and no hot spot: each parallel run costs its own `branch-review`, its own peer verifier (`review-round`'s `peer.ts`), and its own app stack on the ports the repo assigns to a parallel session.
 6. **Write each command.** Give a parent when the run takes all its open sub-issues; otherwise list the run's tickets one by one.
 
 Reply with:
 
 - **Waves**: table `wave | ticket | size | title | blocked by | touches`.
-- **Runs**: table `run | tickets | L count | start after | parallel with | command`, the command being the exact `/implement …` to type.
+- **Runs**: table `run | tickets | points | start after | parallel with | command`, the command being the exact `/implement …` to type.
 - **Why**: one line per grouping or split decision, with the coupling or budget it rests on.
 - **Not ready**: tickets left out and their next step.
 - **Risks**: likely conflicts or blocking edges that look wrong, marked as guesses when not confirmed in the code.
