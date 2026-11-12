@@ -94,6 +94,9 @@ function command(engine: Engine, model: string, access: Access, addDirs: string[
 async function runPeer(family: Family, access: Access, prompt: string, traceFile: string, addDirs: string[], schemaPath?: string) {
   const { engine, model } = PEERS[family];
   const schema = schemaPath ? { path: schemaPath, text: await Bun.file(schemaPath).text() } : undefined;
+  // A Bun.file stdout writes from the start without truncating, so a rerun would leave the tail of the previous
+  // run's trace behind, and its reads and answer would count as this run's.
+  await rm(traceFile, { force: true });
   const child = Bun.spawn(command(engine, model, access, addDirs, schema), {
     stdin: new Blob([prompt]),
     stdout: Bun.file(traceFile),

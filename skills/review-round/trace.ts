@@ -4,13 +4,18 @@
 //   claude  `claude -p --output-format stream-json`: `assistant` events with `tool_use` blocks, a final `result`.
 //   codex   `codex exec --json`: `item.*` events (`command_execution`, `agent_message`), `turn.completed|failed`.
 // A file counts as opened only through a whole-file read: claude's Read, or a codex shell command whose program
-// prints files (cat, sed, nl, head, tail, …). Codex has no read tool, so its evidence is the weaker.
+// prints files (cat, sed, nl, head, tail, …), its glob arguments matched as the shell would, or whose output holds a
+// file's whole text (`printed`, checked by the gate against each patch). Codex has no read tool, so its evidence is the
+// weaker.
 
 export type Engine = "claude" | "codex";
 
 export type Trace = {
   engine: Engine;
   opened: string[];
+  // The output of each command that exited 0 (codex only): a file whose whole text appears in one was printed, however
+  // the command named it (a glob, a loop, a pipe), which is stronger evidence than the command's words.
+  printed: string[];
   text: string;
   output: unknown;
   toolCalls: number;
@@ -70,6 +75,7 @@ function readClaude(events: Event[]): Trace {
   return {
     engine: "claude",
     opened,
+    printed: [],
     text,
     output: result?.structured_output ?? parseJsonAnswer(text),
     toolCalls: toolUses.length,
@@ -100,13 +106,16 @@ function codexReads(command: string): string[] {
 function readCodex(events: Event[]): Trace {
   const items = events.flatMap((event) => (event.type === "item.completed" && isObject(event.item) ? [event.item] : []));
   const commands = items.filter((item) => item.type === "command_execution");
-  const opened = commands.flatMap((item) => (item.exit_code === 0 && isString(item.command) ? codexReads(item.command) : []));
+  const succeeded = commands.filter((item) => item.exit_code === 0);
+  const opened = succeeded.flatMap((item) => (isString(item.command) ? codexReads(item.command) : []));
+  const printed = succeeded.flatMap((item) => (isString(item.aggregated_output) ? [item.aggregated_output] : []));
   const answer = items.findLast((item) => item.type === "agent_message");
   const text = isString(answer?.text) ? answer.text : "";
   const failed = events.some((event) => event.type === "turn.failed" || event.type === "error");
   return {
     engine: "codex",
     opened,
+    printed,
     text,
     output: parseJsonAnswer(text),
     toolCalls: commands.length,
@@ -114,6 +123,14 @@ function readCodex(events: Event[]): Trace {
   };
 }
 
-// Whether the trace opened `path`: an absolute path read as is, or a repo-relative one read from the worktree.
+// Whether a command printed `text` whole. An empty text proves nothing, since every output holds it.
+export const printedText = (printed: string[], text: string): boolean =>
+  text !== "" && printed.some((output) => output.includes(text));
+
+// Whether the trace opened `path`: an absolute path read as is, or a repo-relative one read from the worktree. A read
+// argument holding a wildcard (`cat patches/*.patch`) is the shell's glob, recorded as written: it opened every path it
+// matches, a `*` staying within one folder. A command that exited 0 had its glob expand, so the match is a real read.
 export const openedFile = (opened: string[], path: string): boolean =>
-  opened.some((file) => file === path || file.endsWith(`/${path}`));
+  opened.some((file) =>
+    /[*?[]/.test(file) ? new Bun.Glob(file).match(path) : file === path || file.endsWith(`/${path}`),
+  );

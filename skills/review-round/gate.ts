@@ -89,7 +89,7 @@ import { closeSync, constants, copyFileSync, existsSync, mkdirSync, mkdtempSync,
 import { constants as osConstants, tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
 import { $ } from "bun";
-import { openedFile, readTrace } from "./trace";
+import { openedFile, printedText, readTrace } from "./trace";
 import { isUiFile, TEST_FILE } from "./ui";
 
 type Finding = { file: string; line: number; title: string; why: string };
@@ -474,8 +474,12 @@ async function judgeReview(roundDir: string, name: string): Promise<ReviewCheck>
   const paths = (await Bun.file(`${roundDir}/slice-${letter}.txt`).text()).split("\n").filter(Boolean);
   const traceFile = Bun.file(`${roundDir}/review-${name}.jsonl`);
   if (!(await traceFile.exists())) return { name, problem: "no trace", summary: `${name}: no trace review-${name}.jsonl` };
-  const { engine, opened, output, toolCalls } = readTrace(await traceFile.text());
-  const unopened = paths.filter((path) => !opened.includes(patchPath(roundDir, path)) && !openedFile(opened, path));
+  const { engine, opened, printed, output, toolCalls } = readTrace(await traceFile.text());
+  const patches = await Promise.all(paths.map((path) => Bun.file(patchPath(roundDir, path)).text()));
+  const unopened = paths.filter(
+    (path, index) =>
+      !openedFile(opened, patchPath(roundDir, path)) && !openedFile(opened, path) && !printedText(printed, patches[index]),
+  );
   const coverage = `${paths.length - unopened.length}/${paths.length} files opened, ${toolCalls} tool calls, ${engine}`;
   if (!isObject(output) || !Array.isArray(output.findings) || !output.findings.every(isFinding))
     return { name, problem: "no schema result", summary: `${name}: no well-formed findings in the trace (${coverage})` };
