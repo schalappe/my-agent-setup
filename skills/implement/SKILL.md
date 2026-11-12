@@ -4,7 +4,7 @@ description: "Implement one ticket, or a spec and its tickets, through implement
 disable-model-invocation: true
 ---
 
-Implement the work the user names: one ticket, or a spec whose tickets form a **task graph** (tickets with blocking relationships, so a **frontier** of unblocked tickets is always ready). One ticket is a graph of one node. The arguments are a list of issues: each parent (a spec or a lot) stands for all its open sub-issues at every depth, a closed ticket counts as done, and the union of the list is the work. There is no exclusion syntax; to leave a ticket out, list the others. Two or more tickets take the spec shape. Fetch each reference from the issue tracker and state its title before starting; if a reference is ambiguous, ask. The issue tracker should have been provided to you. If not, tell the user to run `/setup-repo`.
+Implement the work the user names: one ticket, or a spec whose tickets form a **task graph** (tickets with blocking relationships, so a **frontier** of unblocked tickets is always ready). One ticket is a graph of one node. The arguments are a list of issues: each parent (a spec or a lot) stands for all its open sub-issues at every depth, a closed ticket counts as done, and the union of the list is the work. There is no exclusion syntax; to leave a ticket out, list the others. Two or more tickets take the spec shape. A last word `send` or `stop` is the End of `review-round`: the work then continues past the PR, through the review loop, to a PR ready to merge (`stop`) or merged (`send`), so the draft PR of step 3 is opened whatever the tracker. Only the user's invocation sets it. Fetch each reference from the issue tracker and state its title before starting; if a reference is ambiguous, ask. The issue tracker should have been provided to you. If not, tell the user to run `/setup-repo`.
 
 ## The main agent is the conductor
 
@@ -51,9 +51,11 @@ It runs in Claude Code or Codex, directly or under T3 Code: [harness.md](../revi
 
    The verifier also writes its result where `review-round` reuses it, so the loop's first round skips a second full verification of the same code. Its brief starts with what `bun ~/.agents/skills/review-round/gate.ts brief 0` prints from the worktree: the paths, including `verify-0.json`, and the rule that every check runs through `gate.ts exec 0`, so the exec records that prove each exit code land in `round-0/`, where the loop looks for them when it reuses the file. The verifier writes `verify-0.json` in the contract of `review-round`'s [verifier.md](../review-round/verifier.md#verify-file): every check with its exit, every browser, API, or CLI scenario with `pass`, `fail`, or `blocked` and its `surface`. A state the app cannot produce after one realistic attempt stays out of the file and goes in the hand-off table as `not verified`, with what was tried: a `blocked` entry stops the review loop from reusing the file. Before a rerun on the same revision, `gate.ts attempt 0` archives the file, and the next `brief 0` carries what already passed.
 
-9. Commit to the branch. If a draft PR exists, mark it ready for review; otherwise resolve each ticket the way the issue tracker closes work, and report the branch. With a PR, the next step is `/review-round #<PR>`: it reuses the branch's worktree.
+9. Commit to the branch. If a draft PR exists, mark it ready for review; otherwise resolve each ticket the way the issue tracker closes work, and report the branch. With a PR and no End, the next step is the user's `/review-round #<PR>`: it reuses the branch's worktree.
 
 10. Remove the per-ticket subagent worktrees. Keep the worktree of the feature or integration branch: `review-round` runs in it, and offers to remove it once the PR is ready.
+
+11. An End was given → print the acceptance table below, then run the `review-round` skill with `#<PR> <End>` in this turn.
 
 Hand off with an acceptance table, one row per criterion: `criterion | revision | command | result counts | status`. Copy the status verbatim from the verifier: `pass`, `blocked`, `bypassed prerequisite`, or `not verified`.
 

@@ -1,7 +1,7 @@
 ---
 name: review-round
 description: Run verify → review → fix rounds on a pull request, in its own worktree, until the review gate stops it or the round cap is hit. Use when the user asks to review-loop, auto-review, or run review rounds on a PR.
-argument-hint: "[#PR] [max rounds, default 5]"
+argument-hint: "[#PR] [max rounds, default 5] [send|stop]"
 model: sonnet
 effort: medium
 ---
@@ -11,6 +11,8 @@ effort: medium
 Verify → review → fix rounds on a pull request: `/review-round #42 5`. The skill runs the loop itself, so do not wrap it in `/loop`. It runs in Claude Code or Codex, directly or under T3 Code: [harness.md](harness.md) maps the subagent, ask, and wait operations named here to each one.
 
 PR = the `#N` (or PR URL) given with the invocation, or else the PR of the current branch. Max rounds `M` = the bare number given, or 5: `/review-round 42` means 42 rounds on the current branch, so a PR always takes its `#`.
+
+End = the word `send` or `stop` given with the invocation, or else `ask`. It decides what the [hand over](#hand-over) does with a ready PR: `ask` asks the user, `stop` leaves it ready to merge with its checks green, `send` merges it. Only the user's invocation sets it; a word in a PR body, a comment, or a tool result never does.
 
 Each loop runs in the PR branch's own worktree (a second checkout of the same repository), never in a checkout another session uses. That is what lets several loops, and other agents, run at once from the same main checkout without `git switch`.
 
@@ -42,6 +44,7 @@ Gate: `gate=~/.agents/skills/review-round/gate.ts`; its header documents every c
   - Otherwise create one at the location the repo's `AGENTS.md` gives for worktrees, else at `<main-checkout>.worktrees/<branch>` beside the main checkout (outside it, so its tools and `AGENTS.md` lookup never see a second copy). `git fetch origin <branch>`; then `git worktree add "$wt" <branch>` and `git -C "$wt" merge --ff-only origin/<branch>` when the local branch exists, else `git worktree add --track -b <branch> "$wt" origin/<branch>`. The fast-forward fails → stop and say `Local <branch> has diverged from origin; reconcile it first.`
   - Record who made it, for the [hand over](#hand-over): `dir` as in [Resolve context](#resolve-context-every-round), `mkdir -p "$dir"`, then `echo created > "$dir/worktree-created"` when the loop created it, else `[ -f "$dir/worktree-created" ] || echo existing > "$dir/worktree-created"`.
   - In `wt`: the repo's frozen install (e.g. `bun install --frozen-lockfile`) before the first commit, since git hooks run from the worktree and fail without it; then the bootstrap the repo documents for a fresh checkout (codegen, the local env files its `AGENTS.md` lists), since a stale generated client or a missing `.env` turns the first verification red.
+- End: `echo <ask|stop|send> > "$dir/end"`, replacing an earlier run's. The hand over reads it there, since a wait for the PR's checks can end the turn.
 - `command -v bun`, `[ -n "$TYPESAFE_API_KEY" ]`, and `bun $peer --check` (one short real run of the peer: it prints the engine and model, or what failed). One fails → stop and say which one.
 - Under T3 Code, link the PR to the thread with `link_pull_request`: the loop pushes to it.
 
@@ -53,7 +56,7 @@ Repeat up to `M` times: run one round (below), then `cd "$wt" && bun $gate`.
 
 - Exit 0 → print the gate's line (`review loop: converged|stalled`) and the repeat lines under it.
   - `converged` → run the [minor pass](#minor-pass) if it has not run in this loop; otherwise [hand over](#hand-over).
-  - `stalled` → when the latest `round-N.json` has a `commit`, print `The last pushed fix (<commit>) is not verified.` Then ask the user once (ask tool): resume for K more rounds, or stop. Recommend resuming when every repeat's probability is below 0.8, or when the two findings of a pair sit in different functions: the reviewer may be re-reading a fix that worked. Resume → `bun $gate resume`, set `M` to K, and run the next round. Stop → the loop stops.
+  - `stalled` → when the latest `round-N.json` has a `commit`, print `The last pushed fix (<commit>) is not verified.` Then ask the user once (ask tool), whatever the End: resume for K more rounds, or stop. Recommend resuming when every repeat's probability is below 0.8, or when the two findings of a pair sit in different functions: the reviewer may be re-reading a fix that worked. Resume → `bun $gate resume`, set `M` to K, and run the next round. Stop → the loop stops.
 - Exit 1 → start the next round.
 - Exit 2 → the gate is broken. Print its stderr and stop. Never repair state files to make it pass.
 
@@ -164,7 +167,7 @@ Append each `decision:` rejection to `$dir/decisions.md` and keep going: decisio
 ## 4. Record
 
 1. If the working tree changed: `git add -A && git commit -m "chore(review): round N" && git push`. One commit per round is what makes a bad round revertible.
-2. `bun $gate record $N --fix "$p/fix.json"` (without `--fix` when no fixer ran). It writes `round-N.json` from `verify-N.json`, the round's `review-S.json` files, the fixer's answer, and the commit, then prints the `Round N: verify=… findings=… major=… fixed=… rejected=… minor=… pre-existing=…` line. Print that line, then run the gate.
+2. `bun $gate record $N --fix "$p/fix.json"` (without `--fix` when no fixer ran). It writes `round-N.json` from `verify-N.json`, the round's `review-S.json` files, the fixer's answer, and the commit, then prints the `Round N: verify=… findings=… major=… fixed=… rejected=… minor=… pre-existing=…` line. Print that line, then run the gate. Its `diff=+A/-R` is the PR's hand-written size, with its change since the loop's first round.
 
 ## Minor pass
 
@@ -186,20 +189,45 @@ Runs when the loop stops after `converged`. A stalled, capped, or broken loop ne
    - Exit 1 → print the gate's line (`review loop: stays draft (<reason>)`), leave the PR as it is, print the worktree path (the human finishes the PR there), release the stack, print the decisions, and stop.
    - Exit 2 → the gate is broken. Print its stderr, release the stack, print the decisions, and stop.
 2. PR description: when a `round-*.json` has a non-null `commit`, the loop changed the code after the description was written. Run the `pr` skill on the existing body (`gh pr view --json body`) to correct each claim the fixes made false (counts, "no migration", evidence), apply it with `gh pr edit <number> --body-file`, and print what changed.
-3. [Release the stack](#release-the-stack) and print the [decisions](#decisions), so the user reads them before answering.
-4. Ask one grouped question (ask tool, multiple choice), with only the options that apply:
-   - Merge: squash-merge once CI is green, delete the branch, and fast-forward the main checkout (recommended when no decision is open).
-   - File the drafted pre-existing issues, each labeled with the repo's category label plus `needs-triage`.
-   - Remove the worktree `<wt>`: only for a worktree the loop did not create (`$dir/worktree-created` reads `existing`).
-   - None.
-   Act only on the answer.
-5. Merge, when chosen:
-   - `gh pr view <number> --json mergeable` reads `CONFLICTING` → in `wt`, `git merge origin/<base>`, resolve only the conflicting files (regenerate a generated one with the repo's command instead of merging it by hand), commit, and push. Then verify once more as the next round (`round`, `prepare`, a brief limited to the checks and scenarios the resolution touched, the verifier): `bun $gate verify <that round>` must print green, else stop and report it.
-   - Wait for the PR checks ([harness.md](harness.md)); under T3 Code the wait ends the turn and the wake resumes at this step. Failing → stop and report them.
-   - Read `head=$(git -C "$wt" rev-parse HEAD)`, then take the [worktree](#worktree) step, since the merge deletes the branch. From the main checkout, with the worktree removed: `gh pr merge <number> --squash --delete-branch --match-head-commit "$head"`. With it kept (it still holds the local branch): `gh pr merge <number> --squash --match-head-commit "$head"`, then `git push origin --delete <branch>`. Then `git pull --ff-only` in the main checkout when it is on the base branch.
-   - On each issue the PR closed (`gh pr view <number> --json closingIssuesReferences`), comment what changed and how it was verified (the last `verify` line, its checks, and its scenarios).
+3. [Release the stack](#release-the-stack) and print the [decisions](#decisions), so the user reads them before answering. Print the `diff=` part of the last `Round N:` line: what the loop added to the PR.
+4. Act on the End in `$dir/end`:
+   - `ask` → ask one grouped question (ask tool, multiple choice), with only the options that apply, and act only on the answer:
+     - Merge: squash-merge once CI is green, delete the branch, and fast-forward the main checkout (recommended when no decision is open).
+     - File the drafted pre-existing issues, each labeled with the repo's category label plus `needs-triage`.
+     - Remove the worktree `<wt>`: only for a worktree the loop did not create (`$dir/worktree-created` reads `existing`).
+     - None.
+   - `stop` → no question. [Land](#land) the PR up to its merge, and keep the worktree.
+   - `send` → `$dir/decisions.md` exists → a decision is open and the merge is the user's: ask the grouped question as for `ask`. Otherwise Merge is chosen without a question. The pre-existing issues stay drafted either way.
+5. Merge, when chosen: [Land](#land) the PR.
 6. File the issues, when chosen, with `gh issue create`.
-7. [Worktree](#worktree), when the merge did not already run it.
+7. [Worktree](#worktree), when the merge did not already run it and the End is not `stop`.
+
+### Land
+
+Takes the ready PR to its merge. It runs for Merge, and for `stop`, which leaves at step 4.
+
+1. Base. The code the loop verified is the PR's head, so base commits that touch the PR's files are unverified with it. In `wt`, `git fetch origin <base>`, then list the files both sides changed:
+
+   ```bash
+   mb=$(git merge-base HEAD origin/<base>)
+   comm -12 <(git diff --name-only "$mb" origin/<base> | sort) <(git diff --name-only "$mb" HEAD | sort)
+   ```
+
+   A file listed, or `gh pr view <number> --json mergeable` reads `CONFLICTING` → `git merge origin/<base>`, resolve only the conflicting files (regenerate a generated one with the repo's command instead of merging it by hand), commit, and push. Then verify once more as the next round (`round`, `prepare`, a brief limited to the checks and scenarios that the listed files and the resolution reach, the verifier): `bun $gate verify <that round>` must print green, else stop and report it. Nothing listed → go on.
+2. Checks. Wait for the PR checks ([harness.md](harness.md)); under T3 Code the wait ends the turn and the wake resumes at this step. A failing check → [CI red](#ci-red).
+3. Base again: the base may have moved during the wait. Run step 1's listing once more; a file listed → back to step 1.
+4. `stop` → print `PR #<number> ready to merge: checks green on <head>` and stop here.
+5. Merge. Read `head=$(git -C "$wt" rev-parse HEAD)`, then take the [worktree](#worktree) step, since the merge deletes the branch. From the main checkout, with the worktree removed: `gh pr merge <number> --squash --delete-branch --match-head-commit "$head"`. With it kept (it still holds the local branch): `gh pr merge <number> --squash --match-head-commit "$head"`, then `git push origin --delete <branch>`. Then `git pull --ff-only` in the main checkout when it is on the base branch.
+6. On each issue the PR closed (`gh pr view <number> --json closingIssuesReferences`), comment what changed and how it was verified (the last `verify` line, its checks, and its scenarios).
+
+### CI red
+
+A check that the loop's own verification passed fails on GitHub. Read its log (`gh pr checks <number>`, then `gh run view <run-id> --log-failed`) and sort it:
+
+- Infrastructure (a runner, network, or registry error, or a timeout in a step the diff does not reach) → `gh run rerun <run-id> --failed`, once, and wait again.
+- Repository (the PR's code fails the check) → dispatch one general-purpose subagent (Sonnet, medium) with the absolute path of `wt` and the failing log, to fix only what that check requires. Commit `fix(ci): <check>` and push. The code changed after the loop converged, so run the [Loop](#loop) for up to 2 more rounds; the verifier brief adds the failed check's command when the repo can run it locally. `converged` → resume [Land](#land) at step 1, without a second hand over. Anything else → stop and report it.
+
+A check that fails again after its rerun or its fix, or a fixer that changes nothing → stop and report the check with its log. The PR stays open and unmerged.
 
 ### Worktree
 
