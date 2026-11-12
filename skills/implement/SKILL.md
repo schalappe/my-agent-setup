@@ -10,9 +10,15 @@ Implement the work the user names: one ticket, or a spec whose tickets form a **
 
 The main agent owns scope, decisions, and acceptance. It reads the tickets, the spec, the `AGENTS.md` of each project the work touches, and the diffs its subagents return. Exploration and code go to subagents, so the main context keeps every decision of the conversation intact.
 
-Subagents report open questions instead of guessing a product or business rule. The main agent answers from the tickets, the docs, and the conversation, asks the user with the ask tool when the decision is the user's, and lets the subagent continue with the answer (`SendMessage` in Claude Code).
+Subagents report open questions instead of guessing a product or business rule. The main agent answers from the tickets, the docs, and the conversation, asks the user with the ask tool when the decision is the user's (with an End, [it waits for the end](#decisions-with-an-end)), and lets the subagent continue with the answer (`SendMessage` in Claude Code).
 
 At the end the main agent **harmonises**: it compares what each subagent did with what was asked and decided. Any gap is the main agent's to close, by sending the work back with the precise difference or by correcting it itself, until the result matches.
+
+### Decisions with an End
+
+With an End the user is away, so a decision that is theirs waits for the end of the run. The main agent takes its recommended option, has the work built on it, and appends the decision to `$dir/decisions.md`, with `dir=$(git rev-parse --path-format=absolute --git-common-dir)/review/<branch>` for the feature or integration branch: the question, its options, the recommendation, the default it built on, and the evidence. `review-round` prints that file at its end, and `send` asks before it merges while the file exists.
+
+Ask now, through the ask tool, only when building on a default is unsafe: the choice spends money, changes security or a public interface, deletes data, needs a migration a later answer could not undo, or the goal itself is ambiguous.
 
 Communicate through **context pointers** (the spec, tickets, notes files, commits), not restated content.
 
@@ -43,7 +49,7 @@ It runs in Claude Code or Codex, directly or under T3 Code: [harness.md](../revi
 
 5. On the spec shape, merge each finished ticket with a merger subagent. When that changes the frontier, dispatch implementers for the new tickets.
 
-6. Run the `branch-review` skill on the branch. A finding that is doubtful, partial, or a product decision goes to the user now, through the ask tool, before final verification. Fix the rest in one implementer subagent, then review the fix commits alone with `branch-review` (fixed point: the commit before the fixes) before merging them: a fix can trade one finding for a regression. Its reviewers are peer processes on the other model family; an in-session reviewer would be the writer's family reviewing itself.
+6. Run the `branch-review` skill on the branch. A finding that is doubtful, partial, or a product decision goes to the user now, through the ask tool, before final verification; with an End, it is a [decision that waits](#decisions-with-an-end). Fix the rest in one implementer subagent, then review the fix commits alone with `branch-review` (fixed point: the commit before the fixes) before merging them: a fix can trade one finding for a regression. Its reviewers are peer processes on the other model family; an in-session reviewer would be the writer's family reviewing itself.
 
 7. Harmonise (see above) against the tickets, the spec, the conversation's decisions, and the review. Fix the small adjacent findings that subagents only reported instead of handing them on.
 
@@ -63,4 +69,4 @@ Hand off with an acceptance table, one row per criterion: `criterion | revision 
 - Baseline attribution ("not new", "also fails on develop") is `unproven` until reproduced on the base revision.
 - A required full run is satisfied only by one passing full invocation, not by pieced-together partial runs.
 - A defect found and not fixed names why (redesign, product decision, contract change) and links its drafted issue.
-- Unresolved assumptions: none, or each one already asked through the ask tool.
+- Unresolved assumptions: none, or each one already asked through the ask tool or, with an End, recorded in `decisions.md`.
