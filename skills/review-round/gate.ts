@@ -39,7 +39,9 @@
 //   slice N         splits round N's diff into review slices and writes their prompts (below).
 //   reviewed N      judges each reviewer process of round N from its trace and writes review-<S>.json (below).
 //   record N [--fix <file>]   writes round-N.json from verify-N.json, the round's review-<S>.json files, and the
-//                   fixer's {"fixed": [...], "rejected": [...]}, then prints the `Round N: …` line.
+//                   fixer's {"fixed": [...], "rejected": [...]}, then prints the `Round N: …` line. Its `diff=+A/-R`
+//                   counts the hand-written lines of files.txt, with the change since the loop's first round: review
+//                   fixes tend to grow a PR, and the number shows it.
 //   ready           whether the PR may leave draft (below).
 //   resume          archives a stalled loop's status and stall.json, so the next round runs.
 //
@@ -319,6 +321,32 @@ export function packSlices(numstat: string, limit = SLICE_LINES): string[][] {
   }
   return slices.map((slice) => slice.paths);
 }
+
+export type DiffSize = { added: number; removed: number };
+
+// The lines a numstat adds and removes, generated files left out: a lockfile's churn says nothing about what the
+// author wrote. Binary files (numstat "-") count as 0.
+export function diffSize(numstat: string, generated: Set<string> = new Set()): DiffSize {
+  const size = { added: 0, removed: 0 };
+  for (const line of numstat.split("\n")) {
+    const [added, removed] = line.split("\t");
+    if (!pathOf(line) || generated.has(pathOf(line))) continue;
+    size.added += Number(added) || 0;
+    size.removed += Number(removed) || 0;
+  }
+  return size;
+}
+
+// `+A/-R`, then how many lines the diff gained or lost since `first`, the loop's first measured round.
+export function describeDiff(size: DiffSize, first: DiffSize | undefined): string {
+  const text = `+${size.added}/-${size.removed}`;
+  if (!first) return text;
+  const growth = size.added + size.removed - first.added - first.removed;
+  return `${text} (${growth >= 0 ? "+" : ""}${growth} lines since the first round)`;
+}
+
+const isDiffSize = (value: unknown): value is DiffSize =>
+  isObject(value) && typeof value.added === "number" && typeof value.removed === "number";
 
 // Writes round N's diff handoff against the merge-base with origin/<base>, working tree included so the previous
 // round's fixes are always seen. --no-renames splits a rename into a delete and an add: a rename's numstat path
@@ -859,17 +887,27 @@ async function record(round: string, fixPath: string | undefined): Promise<strin
   const head = (await $`git rev-parse HEAD`.text()).trim();
   const reviewed: RecordedFindings =
     outcome.result === "green" ? await reviewedFindings(dir, round) : { findings: 0, majors: [], minor: [], pre_existing: [] };
+  const numstat = await Bun.file(`${dir}/round-${round}/files.txt`).text();
+  const diff = diffSize(numstat, await generatedPaths(await toplevel(), numstat.split("\n").map(pathOf).filter(Boolean)));
+  let first: DiffSize | undefined;
+  for (const name of roundNames(dir)) {
+    const earlier = await readJson(`${dir}/${name}`);
+    if (!isObject(earlier) || Number(earlier.round) >= Number(round) || !isDiffSize(earlier.diff)) continue;
+    first = earlier.diff;
+    break;
+  }
   const body = {
     round: Number(round),
     head: verify.head,
     tree: verify.tree,
+    diff,
     ...reviewed,
     fixed: fix.fixed.length,
     rejected: outcome.result === "green" ? fix.rejected : [],
     commit: head !== verify.head ? head : null,
   };
   await Bun.write(`${dir}/round-${round}.json`, `${JSON.stringify(body, null, 2)}\n`);
-  return `Round ${round}: verify=${describeOutcome(outcome)} findings=${body.findings} major=${body.majors.length} fixed=${body.fixed} rejected=${body.rejected.length} minor=${body.minor.length} pre-existing=${body.pre_existing.length}`;
+  return `Round ${round}: verify=${describeOutcome(outcome)} findings=${body.findings} major=${body.majors.length} fixed=${body.fixed} rejected=${body.rejected.length} minor=${body.minor.length} pre-existing=${body.pre_existing.length} diff=${describeDiff(diff, first)}`;
 }
 
 async function verdict(): Promise<"converged" | "stalled" | undefined> {
@@ -1028,7 +1066,7 @@ function roundArg(value: string | undefined, usage: string): string {
   return value!;
 }
 
-// Guarded so `packSlices` and `verifyProblem` can be imported without running the gate.
+// Guarded so `packSlices`, `verifyProblem`, and `diffSize` can be imported without running the gate.
 if (import.meta.main) {
   try {
     const [command, ...args] = process.argv.slice(2);
