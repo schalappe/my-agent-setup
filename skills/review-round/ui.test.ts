@@ -78,4 +78,8 @@ test("resolveImport tells repository files, dependencies, and unknown specifiers
   expect(resolveImport("src/x.tsx", "path", files, deps)).toBe("external");
   expect(resolveImport("src/x.tsx", "@/lib/x", files, deps)).toBeUndefined();
   expect(resolveImport("src/x.tsx", "./missing", files, deps)).toBeUndefined();
+  const typed = new Set(["@types/mdast", "@types/scope__lib"]);
+  expect(resolveImport("src/x.ts", "mdast", files, typed)).toBe("external");
+  expect(resolveImport("src/x.ts", "@scope/lib", files, typed)).toBe("external");
+  expect(resolveImport("src/x.ts", "unist", files, typed)).toBeUndefined();
 });

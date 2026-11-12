@@ -89,7 +89,9 @@ async function uiReach(root: string, pkg: Package): Promise<Set<string> | undefi
 
 /**
  * The repository file `specifier` names when imported from `from`, "external" for a dependency or a runtime module,
- * undefined when it is neither. A `.js` specifier also finds its `.ts` source (TypeScript's ESM convention).
+ * undefined when it is neither. A `.js` specifier also finds its `.ts` source (TypeScript's ESM convention). A name
+ * whose `@types/` package is a dependency is external too: a type-only import (`mdast` through `@types/mdast`) loads
+ * no file.
  */
 export function resolveImport(
   from: string,
@@ -107,7 +109,13 @@ export function resolveImport(
     return undefined;
   }
   const name = bare.startsWith("@") ? bare.split("/").slice(0, 2).join("/") : bare.split("/")[0];
-  if (deps.has(name) || bare.startsWith("node:") || bare.startsWith("bun:") || name === "bun") return "external";
+  if (deps.has(name) || deps.has(typesPackage(name))) return "external";
+  if (bare.startsWith("node:") || bare.startsWith("bun:") || name === "bun") return "external";
   if (builtinModules.includes(name)) return "external";
   return undefined;
+}
+
+/** The DefinitelyTyped package of `name`: `@types/x` for `x`, `@types/scope__x` for `@scope/x`. */
+function typesPackage(name: string): string {
+  return `@types/${name.startsWith("@") ? name.slice(1).replace("/", "__") : name}`;
 }
