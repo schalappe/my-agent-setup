@@ -61,9 +61,9 @@ It runs in Claude Code or Codex, directly or under T3 Code: [harness.md](../revi
 
 10. Remove the per-ticket subagent worktrees. Keep the worktree of the feature or integration branch: `review-round` runs in it, and offers to remove it once the PR is ready.
 
-11. An End was given → print the acceptance table below, then run the `review-round` skill with `#<PR> <End>` in this turn.
+11. An End was given → run the `review-round` skill with `#<PR> <End>` in this turn. The acceptance table then goes in the message that ends the loop, with each row's revision and status read from the loop's last `verify-N.json`.
 
-Hand off with an acceptance table, one row per criterion: `criterion | revision | command | result counts | status`. Copy the status verbatim from the verifier: `pass`, `blocked`, `bypassed prerequisite`, or `not verified`.
+Hand off with an acceptance table in the run's last message: a markdown table, one row per acceptance criterion of the ticket, with the columns `criterion | revision | command | result counts | status`. Copy the status verbatim from the verifier: `pass`, `blocked`, `bypassed prerequisite`, or `not verified`. The hand-off is done when every criterion has its row; a paragraph that sums up the verification is not the table.
 
 - Synthetic interactions (scripted events, mocks, injected state) are never reported as physical ones.
 - Baseline attribution ("not new", "also fails on develop") is `unproven` until reproduced on the base revision.

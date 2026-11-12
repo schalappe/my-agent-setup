@@ -167,7 +167,7 @@ Append each `decision:` rejection to `$dir/decisions.md` and keep going: decisio
 ## 4. Record
 
 1. If the working tree changed: `git add -A && git commit -m "chore(review): round N" && git push`. One commit per round is what makes a bad round revertible.
-2. `bun $gate record $N --fix "$p/fix.json"` (without `--fix` when no fixer ran). It writes `round-N.json` from `verify-N.json`, the round's `review-S.json` files, the fixer's answer, and the commit, then prints the `Round N: verify=… findings=… major=… fixed=… rejected=… minor=… pre-existing=…` line. Print that line, then run the gate. Its `diff=+A/-R` is the PR's hand-written size, with its change since the loop's first round.
+2. `bun $gate record $N --fix "$p/fix.json"` (without `--fix` when no fixer ran). It writes `round-N.json` from `verify-N.json`, the round's `review-S.json` files, the fixer's answer, and the commit, then prints the `Round N: verify=… findings=… major=… fixed=… rejected=… minor=… pre-existing=…` line. Copy that line verbatim into your reply text, since the user reads your text and never the command output, then run the gate. Its `diff=+A/-R` is the PR's hand-written size, with its change since the loop's first round.
 
 ## Minor pass
 
@@ -189,7 +189,7 @@ Runs when the loop stops after `converged`. A stalled, capped, or broken loop ne
    - Exit 1 → print the gate's line (`review loop: stays draft (<reason>)`), leave the PR as it is, print the worktree path (the human finishes the PR there), release the stack, print the decisions, and stop.
    - Exit 2 → the gate is broken. Print its stderr, release the stack, print the decisions, and stop.
 2. PR description: when a `round-*.json` has a non-null `commit`, the loop changed the code after the description was written. Run the `pr` skill on the existing body (`gh pr view --json body`) to correct each claim the fixes made false (counts, "no migration", evidence), apply it with `gh pr edit <number> --body-file`, and print what changed.
-3. [Release the stack](#release-the-stack) and print the [decisions](#decisions), so the user reads them before answering. Print the `diff=` part of the last `Round N:` line: what the loop added to the PR.
+3. [Release the stack](#release-the-stack) and print the [decisions](#decisions), so the user reads them before answering. The message that ends the loop repeats the last `Round N:` line verbatim, in a code span: its `diff=` is what the loop added to the PR.
 4. Act on the End in `$dir/end`:
    - `ask` → ask one grouped question (ask tool, multiple choice), with only the options that apply, and act only on the answer:
      - Merge: squash-merge once CI is green, delete the branch, and fast-forward the main checkout (recommended when no decision is open).
