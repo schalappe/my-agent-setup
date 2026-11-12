@@ -23,7 +23,7 @@ Read the repo's `docs/agents/issue-tracker.md` and `docs/agents/triage-labels.md
 
 | Outcome | Meaning | Tracker action |
 |---|---|---|
-| ready | The fog checklist is answered and no decision is open | rewrite the body, label `ready-for-agent` |
+| ready | The fog checklist is answered, the cold read is clean, and no decision is open | rewrite the body, label `ready-for-agent` |
 | split | More than one outcome, or more than one agent session of work | rewrite as parent, file child tickets, each scouted to ready |
 | blocked | Ready, but another ticket must land first | rewrite, record the blocking edge, label `ready-for-agent` |
 | needs-info | A decision only the reporter or the business can make | post the open questions, label `needs-info` |
@@ -35,15 +35,17 @@ When the fog is too thick for one ticket (the destination itself is undecided), 
 
 ## Steps
 
-1. **Read.** Read the whole ticket (body, comments, labels, dates) and every linked ticket on every tracker. Treat earlier scout or triage notes as established. If the ticket carries `ready-for-agent`, swap that label for `needs-triage` now and tell the user, so no agent picks it up during scouting. This is the only tracker change before step 5. Record the base commit that the scouting reads (`git rev-parse --short origin/<default branch>`).
+1. **Read.** Read the whole ticket (body, comments, labels, dates) and every linked ticket on every tracker. Treat earlier scout or triage notes as established. If the ticket carries `ready-for-agent`, swap that label for `needs-triage` now and tell the user, so no agent picks it up during scouting. This is the only tracker change before step 6. Record the base commit that the scouting reads (`git rev-parse --short origin/<default branch>`).
 
 2. **Map the fog.** Work through the [fog checklist](#fog-checklist) against the code, the domain docs, the trackers, and primary sources (local copies first, then the web). When you scout several tickets, give each ticket, or each group of tickets with one root cause, to a read-only subagent. Brief it with the ticket, the base commit, the docs that govern the area, the checklist, and the evidence labels. Re-check yourself every claim that changes an outcome (fixed, duplicate, conflict, wontfix) before keeping it. Done when every checklist item has an answer with its evidence label, or `n/a` with the reason.
 
 3. **Settle decisions.** For each open decision, find what the governing docs, ADRs, and primary texts say. Then ask the user with the ask tool. Give one decision per question, the options, your recommendation with its citation, and one concrete example, in the words the UI or glossary uses. Explain the stakes in plain terms first, because a decision the user cannot follow is not settled. A decision only the reporter or the business can make becomes a needs-info question. Done when no decision that changes the implementation is open, or each remaining one is a needs-info question.
 
-4. **Show the plan.** Give the outcome with its evidence, the rewritten body, and every tracker action you will take: labels, closures, new tickets, edits to linked tickets, comments. Wait for the user's go; apply their corrections.
+4. **Cold read.** Draft the body ([Ticket body](#ticket-body)), then dispatch a read-only subagent with the draft and the repo only: none of your notes, none of this conversation. It plays the implementer and lists every question it would have to ask before finishing, every contradiction it meets, and every acceptance criterion it cannot test. Answer each item in the draft from evidence, or settle it as a decision (step 3). Cold-read a changed draft once more with a fresh subagent; what the second read still raises goes to the user as decisions. Done when a cold read raises nothing that changes the implementation.
 
-5. **Act**, in this order, so a crash never leaves a ticket marked ready with a stale body:
+5. **Show the plan.** Give the outcome with its evidence, the rewritten body, and every tracker action you will take: labels, closures, new tickets, edits to linked tickets, comments. Wait for the user's go; apply their corrections.
+
+6. **Act**, in this order, so a crash never leaves a ticket marked ready with a stale body:
    1. Rewrite the body ([Ticket body](#ticket-body)). On a tracker the repo doc declares as the business or reporter tracker, keep the reporter's text and post the result as a comment in that tracker's language instead.
    2. File new tickets, edit linked tickets, close duplicates and retired tickets.
    3. Set the outcome's label last.
@@ -62,6 +64,10 @@ Answer each item for the ticket at hand. Search by domain concept (`GLOSSARY.md`
 - **Reach.** Every entry point that triggers the behavior (API, jobs, UI, batch, other services) and every reader and writer of the data it touches. Which must change together?
 - **Data.** What the change needs, whether it exists today, whether a migration is required, and what happens to existing records.
 - **Expected values.** Compute every number the acceptance criteria need, and show the arithmetic. Cover the edges the domain has (precisions, calendars, empty, error, permission states).
+- **Hostile states.** For each behavior the ticket adds or changes, state what must happen when it fails halfway, runs twice, races another actor (a second user, a job, the same user acting during a wait), is interrupted (a closed tab, a killed process), or meets existing records that break the new rule. Check the sibling actions on the same object too (reject and delete beside approve). Each case gets an expected behavior in the body, or becomes a decision.
+- **Consistency.** Read the criteria against each other, each example against its rule, and the ticket against the repo's conventions (`AGENTS.md`, UI rules) and its sibling tickets, their expected values included. Read a blocked ticket against the code as its blockers will leave it, not as it stands today.
+- **Feasibility.** A criterion that depends on something the repo does not control (a model, a browser, a platform, an upstream library, an external service) needs **live** evidence that it can pass, or a decision on the fallback when it does not.
+- **Authorizations.** What the run will need that only the user grants: a migration that deletes data and its override label, a reset of a shared local stack, a deploy or any change outside the repo, a final verification longer than an hour. Settle each as a decision, so the run never stops to ask for it.
 - **Root cause** (bugs). Pinned with evidence, or ranked hypotheses with the evidence for each and the cheapest way to tell them apart.
 - **Tests.** Which existing tests pin today's behavior and will break or contradict the ticket; which new tests are needed, at which seam; which harness runs them, on what infrastructure, in how much wall-clock time. When acceptance is expensive, find a cheaper faithful check.
 - **Docs.** Which docs, ADRs, and examples must change with the code.
