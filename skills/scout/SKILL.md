@@ -2,7 +2,6 @@
 name: scout
 description: Find what a ticket needs before anyone implements it, settle open decisions with the user, then rewrite or retire the ticket.
 disable-model-invocation: true
-model: fable
 ---
 
 # Scout
@@ -10,10 +9,6 @@ model: fable
 A ticket states the target. It rarely states the **fog of war**, meaning what the implementer must know to reach the target. Examples are callers that must change together, tests that pin today's behavior, a rule a text imposes, numbers nobody computed, or another ticket that already covers part of the work. An implementer who discovers these facts mid-way can lose a day. Scout finds them before implementation starts and changes no code. It ends with a ticket an unattended agent can finish without new scope, or with the ticket retired.
 
 Scout is the only path to `ready-for-agent`. It takes any open ticket, whatever its label, including one already marked `ready-for-agent`. `triage` sends its real tickets here.
-
-## Model
-
-Scout runs only on a model of the Claude Fable family (any version), in every harness. Claude Code switches to one through the `model` frontmatter when the skill runs through its Skill tool. Every other path ignores that field and runs the session model: Codex, and T3 Code, whose `$scout` pastes this file into the prompt even on Claude Code. Before step 1, check the model your system prompt names. If it is not a Claude Fable model, stop: change nothing on any tracker and tell the user to rerun scout on a Fable model (`/model` in Claude Code, the thread's model picker in T3 Code). Codex cannot run Fable, so scout does not run there.
 
 ## Trackers
 
