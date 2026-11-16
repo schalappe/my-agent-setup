@@ -102,7 +102,7 @@ type Carry = { carried_from?: number; carried_from_attempt?: number };
 type Check = Carry & { command: string; exit: number; seconds?: number };
 type Scenario = Carry & { name: string; result: "pass" | "fail" | "blocked"; surface?: string; reason?: string; seconds?: number };
 type Verify = { head: string; tree: string; checks: Check[]; scenarios: Scenario[]; reused_from?: number };
-type ExecRecord = { command: string; cwd: string; head: string; tree?: string; base?: boolean; pid: number; exit?: number; seconds?: number; log: string };
+export type ExecRecord = { command: string; cwd: string; head: string; tree?: string; base?: boolean; pid: number; exit?: number; seconds?: number; log: string };
 type Numbered = { k: number; record: ExecRecord };
 type ReviewFinding = { severity: string; file: string; line: number; title: string; why: string; fix: string; trigger: string; pre_existing: boolean };
 type Rejection = { file: string; line?: number; title: string; reason: string };
@@ -571,19 +571,34 @@ function unproven(verify: Verify, records: Numbered[], source: number): Outcome 
   return undefined;
 }
 
+// A base run shorter than this share of the PR's run stopped before the check itself ran (no backend slot, a missing
+// install): its exit says nothing about the base. A check that really fails fast on the base is blocked too, and the
+// verifier's report says so; that costs a look, where a false known failure turns a red PR green.
+const BASE_RUN_MIN_SHARE = 0.1;
+
+// Whether a failed base run proves the check fails on the base: it ran about as long as the PR's run.
+export function baseRunRan(prRun: ExecRecord, baseRun: ExecRecord): boolean {
+  if (prRun.seconds === undefined || baseRun.seconds === undefined) return false;
+  return baseRun.seconds >= prRun.seconds * BASE_RUN_MIN_SHARE;
+}
+
 // The failing checks that fail on the merge-base too: the latest base run of the same command, at the sha
-// round-N/base holds, exited non-zero. The PR did not introduce them, so they are recorded as pre-existing.
-async function knownFailures(dir: string, verify: Verify, records: Numbered[], source: number): Promise<string[]> {
+// round-N/base holds, exited non-zero after running the check. The PR did not introduce them, so they are recorded
+// as pre-existing. A failed base run that stopped before the check ran is `unrun`: it proves nothing either way.
+async function knownFailures(dir: string, verify: Verify, records: Numbered[], source: number): Promise<{ known: string[]; unrun: string[] }> {
+  const known: string[] = [];
+  const unrun: string[] = [];
   const baseFile = Bun.file(`${dir}/round-${source}/base`);
-  if (!(await baseFile.exists())) return [];
+  if (!(await baseFile.exists())) return { known, unrun };
   const baseSha = (await baseFile.text()).trim();
-  return verify.checks
-    .filter((check) => check.exit !== 0 && !isCarried(check))
-    .filter((check) => {
-      const run = latestFinished(records, (record) => record.base === true && record.command === check.command && record.head === baseSha);
-      return run !== undefined && run.record.exit !== 0;
-    })
-    .map((check) => check.command);
+  for (const check of verify.checks.filter((entry) => entry.exit !== 0 && !isCarried(entry))) {
+    const baseRun = latestFinished(records, (record) => record.base === true && record.command === check.command && record.head === baseSha);
+    if (baseRun === undefined || baseRun.record.exit === 0) continue;
+    const prRun = latestFinished(records, (record) => !record.base && record.command === check.command && record.tree === verify.tree);
+    if (prRun !== undefined && baseRunRan(prRun.record, baseRun.record)) known.push(check.command);
+    else unrun.push(`${check.command} (base run round-${source}/exec/${baseRun.k}.json took ${baseRun.record.seconds ?? "?"} s)`);
+  }
+  return { known, unrun };
 }
 
 async function readVerify(dir: string, round: string): Promise<Outcome & { verify: Verify }> {
@@ -595,7 +610,9 @@ async function readVerify(dir: string, round: string): Promise<Outcome & { verif
   const records = await readExecRecords(dir, source);
   const notProven = unproven(verify, records, source);
   if (notProven) return { ...notProven, verify };
-  const known = await knownFailures(dir, verify, records, source);
+  const { known, unrun } = await knownFailures(dir, verify, records, source);
+  if (unrun.length > 0)
+    return { result: "blocked", reason: `base run stopped before the check ran, so it proves nothing: ${unrun.join("; ")}; rerun it with its environment ready (a backend slot, the install)`, verify };
   // verify-0.json has no round, so no files.txt. Its UI rule is not checked here: a round that reuses or carries from
   // it is judged on its own files.txt, so a UI diff still needs a passing browser scenario there.
   const ui = round === "0" ? false : await changesUi(`${dir}/round-${round}/files.txt`);
