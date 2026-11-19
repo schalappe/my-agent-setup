@@ -12,7 +12,7 @@ one of the two and adds tools of its own. Two kinds of work, two mechanisms:
 ## Writer family
 
 Implementers and fixers run on the session's provider, so the writer is the session's family. `peer.ts` detects it:
-Claude Code sets `CLAUDECODE` in its shells (writer `claude`, peer GPT-6.1 Sol), Codex sets `CODEX_THREAD_ID`
+Claude Code sets `CLAUDECODE` in its shells (writer `claude`, peer GPT-6.2 Sol), Codex sets `CODEX_THREAD_ID`
 (writer `gpt`, peer Claude Opus 5.5). Neither or both set → it stops and asks for `--writer claude|gpt`. Pass
 `--writer` only when another session's model wrote the diff: a wrong family puts the writer's family on its own review.
 

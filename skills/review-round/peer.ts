@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Runs one headless agent from the model family that did not write the code, so verification and review do not
 // share the writer's blind spots. Each family runs through its own CLI and login, with no proxy:
-//   the writer is Claude → GPT-6.1 Sol through `codex exec`;
+//   the writer is Claude → GPT-6.2 Sol through `codex exec`;
 //   the writer is GPT    → Claude Opus 5.5 through `claude -p`.
 // The writer is the family of the session that runs the skill, since the implementer and fixer subagents run on the
 // session's provider: Claude Code sets CLAUDECODE in its shells, Codex sets CODEX_THREAD_ID, and T3 Code runs one of
@@ -27,7 +27,7 @@ type Family = "claude" | "gpt";
 type Access = "read" | "shell" | "full";
 
 const PEERS: Record<Family, { engine: Engine; model: string }> = {
-  claude: { engine: "codex", model: "gpt-6.1-sol" },
+  claude: { engine: "codex", model: "gpt-6.2-sol" },
   gpt: { engine: "claude", model: "claude-opus-5-5" },
 };
 
