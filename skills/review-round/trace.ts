@@ -1,6 +1,7 @@
 // Reads the JSONL trace of one headless peer run (see peer.ts) into the facts the skills act on: the files the agent
-// opened, its final answer, how many tool calls it made, and whether it failed. Two engines write two formats, told
-// apart by their event types:
+// opened, its final answer, how many tool calls it made, and whether it failed. peer.ts now runs only codex; the claude
+// format stays readable because the gate re-checks every recorded round, and loops started before the fixed roles hold
+// claude traces. The two formats are told apart by their event types:
 //   claude  `claude -p --output-format stream-json`: `assistant` events with `tool_use` blocks, a final `result`.
 //   codex   `codex exec --json`: `item.*` events (`command_execution`, `agent_message`), `turn.completed|failed`.
 // A file counts as opened only through a whole-file read: claude's Read, or a codex shell command whose program

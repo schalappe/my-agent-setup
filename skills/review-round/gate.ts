@@ -12,8 +12,11 @@
 //                      review-<S>.json (`reviewed`); verify-attempt-<A>.json (`attempt`); exec/<k>.json and
 //                      evidence/exec-<k>.log (`exec`).
 //   status, stall.json written by the verdict only; `resume` archives them under stalls/<n>/.
+//   same-defect.json   the same-defect judgments, {<pair hash>: {same, reason}}, written by the verdict only and
+//                      never judged again.
 //
-// Commands (exit 2 always means a broken gate: bad or missing file, git or TypeSafe error; the skill stops):
+// Commands (exit 2 always means a broken gate: bad or missing file, git error, or a failed same-defect
+// judge run; the skill stops):
 //   (none)          the verdict after a round. Exit 0 = stop, printing `review loop: converged|stalled` and writing
 //                   "<status> <tree>" to status; exit 1 = run another round.
 //   tree            the working-tree hash (tracked + untracked, ignoring .gitignore'd files) that verify, exec, and
@@ -78,9 +81,11 @@
 // stalled: a critical/major finding of the latest green round repeats one from an earlier green round (the fix
 //   failed, or the fixer rejected it and the reviewer reported it again). Only two kinds of pair can repeat: the same
 //   file (a failed fix), or an earlier finding the fixer rejected (a disagreement). The same pattern found in another
-//   file is a new instance: the loop goes on and the round cap bounds it. "Same defect" is a TypeSafe Jev judgment:
-//   fixes shift lines and the reviewer rewords titles, so file/line/title matching misses repeats. Needs
-//   TYPESAFE_API_KEY. The repeats behind a stall are written to stall.json and printed.
+//   file is a new instance: the loop goes on and the round cap bounds it. "Same defect" is judged by the peer,
+//   GPT-6.2 Sol through peer.ts: fixes shift lines and the reviewer rewords titles, so file/line/title matching
+//   misses repeats. Each pair is judged once and kept in same-defect.json (its run's trace in same-defect.jsonl), so
+//   the verdict is a deterministic function of the round files and those kept judgments. The repeats behind a stall
+//   are written to stall.json and printed with the judge's reason.
 // ready: exit 0 when the loop converged on the current tree and either the minor pass ran or the latest round left
 //   no minor finding to pass on; it prints each remaining minor (`minor left: <file>: <title>`) for the hand-over.
 //   Exit 1 prints why the PR stays draft.
@@ -91,13 +96,15 @@ import { closeSync, constants, copyFileSync, existsSync, mkdirSync, mkdtempSync,
 import { constants as osConstants, tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
 import { $ } from "bun";
+import { runPeer } from "./peer";
 import { openedFile, printedText, readTrace } from "./trace";
 import { isUiFile, TEST_FILE } from "./ui";
 
 type Finding = { file: string; line: number; title: string; why: string };
 type Round = { head: string; tree: string; majors: Finding[]; rejected?: unknown[] };
 type Earlier = { finding: Finding; round: string; rejected: boolean };
-type Repeat = { latest: Finding; earlier: Finding; round: string; probability: number };
+type Repeat = { latest: Finding; earlier: Finding; round: string; reason: string };
+type Judgment = { same: boolean; reason: string };
 type Carry = { carried_from?: number; carried_from_attempt?: number };
 type Check = Carry & { command: string; exit: number; seconds?: number };
 type Scenario = Carry & { name: string; result: "pass" | "fail" | "blocked"; surface?: string; reason?: string; seconds?: number };
@@ -156,9 +163,6 @@ Check the patches against each of these:
 A security defect reachable from a trust boundary is critical.
 
 ${FINDING_RULES}`;
-
-// 0.5 = "more likely the same defect than not"; recalibrate on real rounds if stalls look wrong.
-const SAME_DEFECT = 0.5;
 
 const toplevel = async (cwd = process.cwd()): Promise<string> => (await $`git rev-parse --show-toplevel`.cwd(cwd).text()).trim();
 
@@ -947,7 +951,7 @@ async function verdict(): Promise<"converged" | "stalled" | undefined> {
     }),
   );
 
-  // After validating rounds, so a bad round file still breaks the gate; reuse skips the TypeSafe call.
+  // After validating rounds, so a bad round file still breaks the gate; reuse skips the same-defect judge.
   const statusFile = Bun.file(`${dir}/status`);
   if (await statusFile.exists()) {
     const [status, statusTree] = (await statusFile.text()).trim().split(" ");
@@ -971,7 +975,7 @@ async function verdict(): Promise<"converged" | "stalled" | undefined> {
         rejected: (round.rejected ?? []).some((r) => isObject(r) && r.file === finding.file && r.title === finding.title),
       })),
     );
-    const repeats = await repeatsEarlier(latest.majors, earlier);
+    const repeats = await repeatsEarlier(dir, latest.majors, earlier);
     if (repeats.length > 0) {
       result = "stalled";
       await Bun.write(`${dir}/stall.json`, `${JSON.stringify(repeats, null, 2)}\n`);
@@ -1014,58 +1018,66 @@ async function resume(): Promise<{ resumed: boolean; message: string }> {
 // A pair can repeat only when it shares a file (the fix there failed) or the earlier finding was rejected (the
 // reviewer re-raised it). The same pattern in another file is a new instance, so it never stalls the loop: an
 // earlier fix that worked where it applied is progress, and the round cap bounds the rest.
-// One Noul per candidate pair, all in one request; returns the pairs judged the same defect.
-async function repeatsEarlier(latest: Finding[], earlier: Earlier[]): Promise<Repeat[]> {
-  const pairs = latest.flatMap((finding) =>
-    earlier.filter((e) => e.rejected || e.finding.file === finding.file).map((e) => ({ latest: finding, ...e })),
-  );
+// GPT-6.2 Sol judges the candidate pairs it has not judged before, in one peer run; every judgment is kept in
+// same-defect.json, keyed by the pair's text, so the verdict over the same round files is always the same.
+export async function repeatsEarlier(dir: string, latest: Finding[], earlier: Earlier[]): Promise<Repeat[]> {
+  const pairs = latest
+    .flatMap((finding) => earlier.filter((e) => e.rejected || e.finding.file === finding.file).map((e) => ({ latest: finding, ...e })))
+    .map((pair) => ({ ...pair, key: pairKey(pair.latest, pair.finding) }));
   if (pairs.length === 0) return [];
-  const key = Bun.env.TYPESAFE_API_KEY;
-  if (!key) throw new Error("TYPESAFE_API_KEY is not set");
 
-  const questions = Object.fromEntries(
-    pairs.map((_, k) => [
-      `${k}`,
-      {
-        type: "noul",
-        instructions: `Do \`latest[${k}]\` and \`earlier[${k}]\` report the same underlying defect in the code, even if worded differently?`,
-        criteria: {
-          true: "Same defect: fixing one would resolve the other.",
-          false: "Different defects, even when they share a file or a kind of problem.",
-        },
-      },
-    ]),
-  );
-  // Lines drift between rounds, so only the file and the defect description are compared.
-  const pick = ({ file, title, why }: Finding) => ({ file, title, why });
-  const body = JSON.stringify({
-    model: "jev-latest",
-    state: { latest: pairs.map((pair) => pick(pair.latest)), earlier: pairs.map((pair) => pick(pair.finding)) },
-    questions,
-  });
-
-  for (let attempt = 0; ; attempt++) {
-    const response = await fetch("https://api.typesafe.ai/v1/systemone", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body,
+  const cacheFile = `${dir}/same-defect.json`;
+  const cache: Record<string, Judgment> = existsSync(cacheFile) ? await readJudgments(cacheFile) : {};
+  const unjudged = [...new Map(pairs.filter((pair) => !(pair.key in cache)).map((pair) => [pair.key, pair])).values()];
+  if (unjudged.length > 0) {
+    const judged = await judgeSameDefect(dir, unjudged.map((pair) => ({ latest: pair.latest, earlier: pair.finding })));
+    unjudged.forEach((pair, k) => {
+      cache[pair.key] = judged[k];
     });
-    // 429 rate limit / 529 overloaded: documented as retryable with backoff.
-    if ((response.status === 429 || response.status === 529) && attempt < 3) {
-      await Bun.sleep(1000 * 2 ** attempt);
-      continue;
+    // Write a unique sibling then rename: a crash or a concurrent gate never leaves a half-written cache.
+    const tmp = `${cacheFile}.${process.pid}.${crypto.randomUUID()}.tmp`;
+    try {
+      await Bun.write(tmp, `${JSON.stringify(cache, null, 2)}\n`);
+      renameSync(tmp, cacheFile);
+    } finally {
+      rmSync(tmp, { force: true });
     }
-    if (!response.ok) throw new Error(`TypeSafe ${response.status}: ${await response.text()}`);
-    // Unchecked shape on purpose: every probability is type-checked just below.
-    const { answers } = (await response.json()) as { answers?: Record<string, { noul?: unknown }> };
-    // Read by key, not by order: answers is an object and its key order is the server's.
-    const probabilities = pairs.map((_, k) => answers?.[`${k}`]?.noul);
-    if (!probabilities.every((probability): probability is number => typeof probability === "number"))
-      throw new Error(`unexpected TypeSafe answers: ${JSON.stringify(answers)}`);
-    return pairs
-      .map((pair, k) => ({ latest: pair.latest, earlier: pair.finding, round: pair.round, probability: probabilities[k] }))
-      .filter((repeat) => repeat.probability >= SAME_DEFECT);
   }
+  return pairs
+    .filter((pair) => cache[pair.key].same)
+    .map((pair) => ({ latest: pair.latest, earlier: pair.finding, round: pair.round, reason: cache[pair.key].reason }));
+}
+
+// Lines drift between rounds, so only the file and the defect description identify a finding.
+const pick = ({ file, title, why }: Finding) => ({ file, title, why });
+export const pairKey = (latest: Finding, earlier: Finding): string =>
+  new Bun.CryptoHasher("sha256").update(JSON.stringify([pick(latest), pick(earlier)])).digest("hex");
+
+async function readJudgments(file: string): Promise<Record<string, Judgment>> {
+  const cache = await readJson(file);
+  if (!isObject(cache) || !Object.values(cache).every(isJudgment)) throw new Error(`${file}: not a map of {same, reason} judgments`);
+  return cache as Record<string, Judgment>;
+}
+
+const isJudgment = (value: unknown): value is Judgment =>
+  isObject(value) && typeof value.same === "boolean" && typeof value.reason === "string";
+
+const SAME_DEFECT_TASK = `Each entry of <pairs> holds two code review findings from different rounds of a review loop on one pull request: \`latest\` and \`earlier\`. For each pair, decide whether they report the same underlying defect in the code, even when worded differently or found at shifted lines. Same defect: fixing one would resolve the other. Different defects, even when they share a file or a kind of problem. Judge only from the text given; do not open files. Answer every index exactly once, with \`reason\` in one sentence.`;
+
+async function judgeSameDefect(dir: string, pairs: { latest: Finding; earlier: Finding }[]): Promise<Judgment[]> {
+  const prompt = `${SAME_DEFECT_TASK}\n\n<pairs>\n${JSON.stringify(
+    pairs.map((pair, index) => ({ index, latest: pick(pair.latest), earlier: pick(pair.earlier) })),
+    null,
+    2,
+  )}\n</pairs>`;
+  const schema = join(import.meta.dir, "same-defect-schema.json");
+  const { exit, trace } = await runPeer("read", prompt, `${dir}/same-defect.jsonl`, schema);
+  if (exit !== 0 || trace.isError) throw new Error(`same-defect judge failed (exit ${exit}): ${trace.text || "no answer"}; trace in ${dir}/same-defect.jsonl`);
+  const answers = isObject(trace.output) && Array.isArray(trace.output.pairs) ? trace.output.pairs : undefined;
+  const judgments = pairs.map((_, index) => answers?.filter((answer) => isObject(answer) && answer.index === index));
+  if (!judgments.every((found): found is Judgment[] => found?.length === 1 && isJudgment(found[0])))
+    throw new Error(`same-defect judge did not answer each index exactly once: ${trace.text}`);
+  return judgments.map(([{ same, reason }]) => ({ same, reason }));
 }
 
 // The pairs behind a stall, so the reader sees which findings repeated without asking. A status reused from an
@@ -1075,7 +1087,7 @@ async function printRepeats(): Promise<void> {
   if (!(await file.exists())) return;
   const repeats = (await file.json()) as Repeat[];
   for (const r of repeats)
-    console.log(`  repeat ${r.probability.toFixed(2)}: ${r.latest.file}: ${r.latest.title} ≈ round ${r.round}: ${r.earlier.title}`);
+    console.log(`  repeat: ${r.latest.file}: ${r.latest.title} ≈ round ${r.round}: ${r.earlier.title}${r.reason ? ` (${r.reason})` : ""}`);
 }
 
 function roundArg(value: string | undefined, usage: string): string {

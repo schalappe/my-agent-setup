@@ -2,13 +2,11 @@
 name: review-round
 description: Run verify → review → fix rounds on a pull request, in its own worktree, until the review gate stops it or the round cap is hit. Use when the user asks to review-loop, auto-review, or run review rounds on a PR.
 argument-hint: "[#PR] [max rounds, default 5] [send|stop]"
-model: sonnet
-effort: medium
 ---
 
 # Review rounds
 
-Verify → review → fix rounds on a pull request: `/review-round #42 5`. The skill runs the loop itself, so do not wrap it in `/loop`. It runs in Claude Code or Codex, directly or under T3 Code: [harness.md](harness.md) maps the subagent, ask, and wait operations named here to each one.
+Verify → review → fix rounds on a pull request: `/review-round #42 5`. The skill runs the loop itself, so do not wrap it in `/loop`. It runs in Claude Code, in Codex, or under T3 Code (Claude, Codex, or Gemini): [harness.md](harness.md) maps the subagent, ask, and wait operations named here to each one.
 
 PR = the `#N` (or PR URL) given with the invocation, or else the PR of the current branch. Max rounds `M` = the bare number given, or 5: `/review-round 42` means 42 rounds on the current branch, so a PR always takes its `#`.
 
@@ -16,23 +14,23 @@ End = the word `send` or `stop` given with the invocation, or else `ask`. It dec
 
 Each loop runs in the PR branch's own worktree (a second checkout of the same repository), never in a checkout another session uses. That is what lets several loops, and other agents, run at once from the same main checkout without `git switch`.
 
-One model family writes the code; the other verifies and reviews it, so the checks do not share the writer's blind spots. The **peer** (the verifier and the reviewers) runs in headless CLI processes launched by `peer=~/.agents/skills/review-round/peer.ts`: The fix subagents run on the session's provider, so the writer is the session's family, and `bun $peer` detects it: in Claude Code the peer is GPT-6.2 Sol through `codex exec`, in Codex it is Claude Opus 5.5 through `claude -p` ([harness.md](harness.md#writer-family)). In Claude Code, the orchestration (this file) runs on Sonnet through the frontmatter, until the end of the turn. Set every other model at the call; never rely on the session default:
+The roles are fixed ([harness.md](harness.md#model-roles)): Claude Opus 5.5 writes every fix; GPT-6.2 Sol verifies, reviews, and judges repeats, so the checks do not share the writer's blind spots. The **peer** (the verifier and the reviewers) runs in headless `codex exec` processes launched by `peer=~/.agents/skills/review-round/peer.ts`, whatever harness runs this file. The orchestration (this file) runs on the session's model and writes no code. Set every other model at the call; never rely on the session default:
 
 | Step | Model, effort | How |
 |---|---|---|
 | Verify | the peer | `bun $peer` with the [verifier](#verifier) prompt |
-| Fix (red) | Sonnet, medium | general-purpose subagent with that model and effort |
+| Fix (red) | Opus 5.5, medium | Opus subagent ([harness.md](harness.md#harness-operations)) |
 | Review | the peer | `bun $peer`, two processes per slice: correctness and security |
-| Fix (findings) | Opus, high | general-purpose subagent with that model and effort |
-| Same defect | TypeSafe Jev | the gate |
+| Fix (findings) | Opus 5.5, high | Opus subagent |
+| Same defect | the peer | the gate runs it; the verdict is the gate's |
 
-The fix models are Claude Code's. In Codex, every Sonnet or Opus named in this file reads as the session's model at the same effort, set at the `spawn_agent` call ([harness.md](harness.md)). A Codex thread runs in full access: its sandbox blocks the peer's network.
+Every fixer below (red fix, findings fix, minor pass, CI fix, base merge) is an Opus subagent. A session that cannot start one ([harness.md](harness.md#harness-operations)) stops at preflight. A Codex or Antigravity thread runs in full access: its sandbox blocks the peer's network.
 
 Every fixer brief (red fix, findings fix, minor pass) says: run long checks in the foreground and return only after they finish, with their exit codes; return code that compiles. Its answer is `{"fixed":[titles],"rejected":[{"file","line","title","reason"}]}`; save the red and findings fixers' answers to `$p/fix.json` for [record](#4-record).
 
 Rounds share nothing but the files under `$(git rev-parse --git-common-dir)/review/<branch>/`, which every worktree shares, so state survives disposable ones. Re-resolve the context at the start of every round and do not carry findings over in memory.
 
-Gate: `gate=~/.agents/skills/review-round/gate.ts`; its header documents every command and file. It stops the loop when the rounds are `converged` (the latest round is the latest green one, found no critical or major issue, and ran on the current code: a round whose fixes changed the code always gets one more round) or `stalled` (a critical or major finding of the latest green round repeats one from an earlier green round, in the same file or after the fixer rejected it; the same pattern found in another file is a new instance and the loop goes on). The gate prints the repeated pairs and writes them to `$dir/stall.json`. Red and blocked rounds never count. "Same defect" is judged by TypeSafe Jev, since fixes shift lines and titles get reworded, so the gate needs `TYPESAFE_API_KEY`. A converged loop marks the PR ready once the [minor pass](#minor-pass) has run on its minors; the minors left after it go to the human ([hand over](#hand-over)).
+Gate: `gate=~/.agents/skills/review-round/gate.ts`; its header documents every command and file. It stops the loop when the rounds are `converged` (the latest round is the latest green one, found no critical or major issue, and ran on the current code: a round whose fixes changed the code always gets one more round) or `stalled` (a critical or major finding of the latest green round repeats one from an earlier green round, in the same file or after the fixer rejected it; the same pattern found in another file is a new instance and the loop goes on). The gate prints the repeated pairs and writes them to `$dir/stall.json`. Red and blocked rounds never count. "Same defect" is judged by the peer, since fixes shift lines and titles get reworded: the gate runs it once per new pair and keeps each judgment in `$dir/same-defect.json`, so the verdict over the same rounds never changes. The gate alone computes the verdict from the round files and those judgments. A converged loop marks the PR ready once the [minor pass](#minor-pass) has run on its minors; the minors left after it go to the human ([hand over](#hand-over)).
 
 ## Preflight (once)
 
@@ -45,7 +43,7 @@ Gate: `gate=~/.agents/skills/review-round/gate.ts`; its header documents every c
   - Record who made it, for the [hand over](#hand-over): `dir` as in [Resolve context](#resolve-context-every-round), `mkdir -p "$dir"`, then `echo created > "$dir/worktree-created"` when the loop created it, else `[ -f "$dir/worktree-created" ] || echo existing > "$dir/worktree-created"`.
   - In `wt`: the repo's frozen install (e.g. `bun install --frozen-lockfile`) before the first commit, since git hooks run from the worktree and fail without it; then the bootstrap the repo documents for a fresh checkout (codegen, the local env files its `AGENTS.md` lists), since a stale generated client or a missing `.env` turns the first verification red.
 - End: `echo <ask|stop|send> > "$dir/end"`, replacing an earlier run's. The hand over reads it there, since a wait for the PR's checks can end the turn.
-- `command -v bun`, `[ -n "$TYPESAFE_API_KEY" ]`, and `bun $peer --check` (one short real run of the peer: it prints the engine and model, or what failed). One fails → stop and say which one.
+- `command -v bun`, `bun $peer --check` (one short real run of the peer: it prints `codex gpt-6.2-sol`, or what failed), and the Opus subagent route for this session ([harness.md](harness.md#harness-operations)). One fails → stop and say which one.
 - Under T3 Code, link the PR to the thread with `link_pull_request`: the loop pushes to it.
 
 Every shell command from here on, the gate included, runs from `wt` (start each call with `cd "$wt" &&`: the shell may reset its directory between calls), and sets `peer`, `gate`, `dir`, `N`, and `p` again for the same reason. Every path given to a file tool or a subagent is absolute under `wt`: file tools resolve relative paths against the main checkout.
@@ -56,7 +54,7 @@ Repeat up to `M` times: run one round (below), then `cd "$wt" && bun $gate`.
 
 - Exit 0 → print the gate's line (`review loop: converged|stalled`) and the repeat lines under it.
   - `converged` → run the [minor pass](#minor-pass) if it has not run in this loop; otherwise [hand over](#hand-over).
-  - `stalled` → when the latest `round-N.json` has a `commit`, print `The last pushed fix (<commit>) is not verified.` Then ask the user once (ask tool), whatever the End: resume for K more rounds, or stop. Recommend resuming when every repeat's probability is below 0.8, or when the two findings of a pair sit in different functions: the reviewer may be re-reading a fix that worked. Resume → `bun $gate resume`, set `M` to K, and run the next round. Stop → the loop stops.
+  - `stalled` → when the latest `round-N.json` has a `commit`, print `The last pushed fix (<commit>) is not verified.` Then ask the user once (ask tool), whatever the End: resume for K more rounds, or stop. Recommend resuming when the judge's reason for a pair is weak (it hinges on wording rather than one code path), or when the two findings of a pair sit in different functions: the reviewer may be re-reading a fix that worked. Resume → `bun $gate resume`, set `M` to K, and run the next round. Stop → the loop stops.
 - Exit 1 → start the next round.
 - Exit 2 → the gate is broken. Print its stderr and stop. Never repair state files to make it pass.
 
@@ -110,7 +108,7 @@ The outcome is the line `bun $gate verify $N` prints, never the agent's summary:
 
 - `green` → continue.
 - `green (known failure on base: <command>)` → each such check failed on the PR and on the merge-base alike, so the PR did not introduce it and no fixer touches it. Append each to `$dir/pre-existing.md` (the command, the merge-base sha from `$p/base`, its exec log) unless it is already there; the [hand over](#hand-over) lists it. Continue.
-- `red` → dispatch one general-purpose subagent (Sonnet, medium) with the absolute path of `wt` to fix only what the failing checks or scenarios require, then the verifier once more. Do not review code that fails its own checks. Still red → go to step 4.
+- `red` → dispatch one Opus subagent (medium) with the absolute path of `wt` to fix only what the failing checks or scenarios require, then the verifier once more. Do not review code that fails its own checks. Still red → go to step 4.
 - `blocked: base run stopped before the check ran …` → rerun only that base run with its environment ready, as [verifier.md](verifier.md#checks) says; the PR's own records stand.
 - `blocked: <reason>` → unblock it with the repo's documented local setup (nearest `AGENTS.md`), then the verifier once more. When the reason is a missing browser scenario, dispatch the verifier again with one; when it names a check without an exec record, put the gate's line in the brief. Still blocked → skip review, go to step 4. A blocked scenario is never green.
 
@@ -118,7 +116,7 @@ Before running the verifier once more in the same round, archive its last run wi
 
 ### Verifier
 
-The verifier is the peer in a headless process, never an in-session subagent: those run on the writer's family. With the brief complete in `$p/verify.brief`, run it from `wt` in one long shell call and wait for it ([harness.md](harness.md)):
+The verifier is the peer in a headless process, never an in-session subagent: those run on the session's or the writer's model. With the brief complete in `$p/verify.brief`, run it from `wt` in one long shell call and wait for it ([harness.md](harness.md)):
 
 ```bash
 cd "$wt"
@@ -133,7 +131,7 @@ jq -r .result "$p/verify.out.json"
 
 Recompute `tree`. It must equal `tree` in `verify-N.json` (the code reviewed is the code verified); otherwise re-run step 1.
 
-Reviewers run on the peer in separate headless processes: a model family other than the writer's, a fresh context with no conversation, read-only tools (`--access read`), and only its slice's patches. That separation is what keeps the review from sharing the writer's blind spots. `--schema` gives the output's shape: both engines enforce it, and the gate checks it again.
+Reviewers run on the peer in separate headless processes: GPT-6.2 Sol, never the writer's Opus, a fresh context with no conversation, read-only tools (`--access read`), and only its slice's patches. That separation is what keeps the review from sharing the writer's blind spots. `--schema` gives the output's shape: the engine enforces it, and the gate checks it again.
 
 Write the prompts: `slices=$(bun $gate slice $N)`. It packs `files.txt` into slices of at most 2000 changed lines (a bigger single file is its own slice), writes two prompts per slice letter `S`, `$p/review-S.prompt` (correctness) and `$p/review-sec-S.prompt` (security, checked against the same list as the `hardening` skill), and prints their names one per line (`A`, `sec-A`, `B`, `sec-B`); the loop below runs each name as its own process. The loop reads lines rather than splitting `$slices` on spaces, because zsh does not split an unquoted variable into words. Each prompt carries the reviewer task text, the PR body, the checks and scenarios that passed, the full `files.txt` for orientation, the generated files (lockfiles, generated clients), listed as generated and not reviewed, the findings earlier rounds rejected or recorded as pre-existing (so the reviewer does not repeat them without new evidence), and the absolute paths of that slice's patches: never the whole diff or the conversation.
 
@@ -153,7 +151,7 @@ wait
 bun $gate reviewed $N
 ```
 
-The trace `review-S.jsonl` is the evidence that a review happened: a reviewer that answers without opening its files returns zero findings that look exactly like a clean review. `bun $gate reviewed $N` prints, per process, its findings, the share of its slice's files it opened, its tool calls, and its engine. A `codex` reviewer has no read tool, so its opened files come from its file-printing shell commands (`cat`, `sed`, …): weaker evidence than a read tool's. Exit 0 → it wrote every `review-S.json` from the traces. Exit 1 → rerun once the processes named on its `rerun:` line (a missing trace, no schema result, or a file it never opened), then run it again. Still exit 1 → stop the loop and show those lines and the tail of each failing `review-S.log`. Print those per-process lines after the round line, so the reader sees what each reviewer read. Never review a slice yourself or through a subagent, and never write `review-S.json`: only the gate writes it, from the peer's trace. Never edit a prompt: change the task text in `gate.ts`.
+The trace `review-S.jsonl` is the evidence that a review happened: a reviewer that answers without opening its files returns zero findings that look exactly like a clean review. `bun $gate reviewed $N` prints, per process, its findings, the share of its slice's files it opened, its tool calls, and its engine. The `codex` reviewer has no read tool, so its opened files come from its file-printing shell commands (`cat`, `sed`, …), checked against the printed output. Exit 0 → it wrote every `review-S.json` from the traces. Exit 1 → rerun once the processes named on its `rerun:` line (a missing trace, no schema result, or a file it never opened), then run it again. Still exit 1 → stop the loop and show those lines and the tail of each failing `review-S.log`. Print those per-process lines after the round line, so the reader sees what each reviewer read. Never review a slice yourself or through a subagent, and never write `review-S.json`: only the gate writes it, from the peer's trace. Never edit a prompt: change the task text in `gate.ts`.
 
 ## 3. Fix
 
@@ -161,7 +159,7 @@ Only `critical` and `major` findings are fixed by the loop; fixing minors every 
 
 A finding with `pre_existing: true` is a defect the PR did not introduce, whatever its severity: the loop never fixes it and it never counts toward the gate. Append each to `$dir/pre-existing.md` (file, line, severity, title, trigger, why) unless the same file and title are already there; they reach the user at the [end](#decisions).
 
-Merge the slices' findings. Dispatch one general-purpose subagent (Opus, high: a wrong rejection stalls the loop and a failed fix repeats) with the absolute path of `wt` (it edits only there), the PR body, the critical and major findings, and the patch paths of the files they touch. When a finding names a pattern, the agent fixes every instance: it greps the repo for the pattern before reporting the finding fixed. When the defect sits in robustness the PR intent did not ask for (a lock, a retry layer, a cache), it prefers deleting that code to hardening it: one PR grew 1279 lines of lock code that its owner then replaced with 60. For each finding it either fixes it or rejects it with a one-sentence reason (the finding is wrong, outside the diff, contradicts the PR intent, is hypothetical because no traced caller reaches that state, or is a preference with no concrete failure). A finding that hinges on a business or product rule the PR intent does not settle is rejected with a reason starting `decision:`, naming the question, its recommendation, and the evidence. It does not commit.
+Merge the slices' findings. Dispatch one Opus subagent (high: a wrong rejection stalls the loop and a failed fix repeats) with the absolute path of `wt` (it edits only there), the PR body, the critical and major findings, and the patch paths of the files they touch. When a finding names a pattern, the agent fixes every instance: it greps the repo for the pattern before reporting the finding fixed. When the defect sits in robustness the PR intent did not ask for (a lock, a retry layer, a cache), it prefers deleting that code to hardening it: one PR grew 1279 lines of lock code that its owner then replaced with 60. For each finding it either fixes it or rejects it with a one-sentence reason (the finding is wrong, outside the diff, contradicts the PR intent, is hypothetical because no traced caller reaches that state, or is a preference with no concrete failure). A finding that hinges on a business or product rule the PR intent does not settle is rejected with a reason starting `decision:`, naming the question, its recommendation, and the evidence. It does not commit.
 
 Append each `decision:` rejection to `$dir/decisions.md` and keep going: decisions reach the user once, at the [end](#decisions), never as mid-run notes.
 
@@ -175,7 +173,7 @@ Append each `decision:` rejection to `$dir/decisions.md` and keep going: decisio
 Runs once per loop, when the gate first prints `converged`. `$dir/minor-pass` exists → it already ran: [hand over](#hand-over). Owners almost always ask for the minors to be fixed in the same PR, so the loop does it before handing over.
 
 1. Read `minor` from the latest `round-N.json`. Empty → [hand over](#hand-over).
-2. `touch "$dir/minor-pass"`, so a pass that changes nothing still counts as run. Dispatch one general-purpose subagent (Sonnet, medium) with the absolute path of `wt`, the PR body, those minor findings, and the patch paths of the files they touch. It fixes each one or rejects it under the [Fix](#3-fix) rules (including `decision:`) and does not commit; its answer is reported, not recorded.
+2. `touch "$dir/minor-pass"`, so a pass that changes nothing still counts as run. Dispatch one Opus subagent (medium) with the absolute path of `wt`, the PR body, those minor findings, and the patch paths of the files they touch. It fixes each one or rejects it under the [Fix](#3-fix) rules (including `decision:`) and does not commit; its answer is reported, not recorded.
 3. Nothing changed → report the rejections and [hand over](#hand-over). Otherwise commit `chore(review): minor fixes` and push, then run one more full round (verify, review, fix, record) and `bun $gate`. That round reviews the minor fixes; its own minors go to the human.
 4. The gate's exit after that round decides as usual: exit 1 continues the loop within `M` plus that one extra round.
 
@@ -214,7 +212,7 @@ Takes the ready PR to its merge. It runs for Merge, and for `stop`, which leaves
    comm -12 <(git diff --name-only "$mb" origin/<base> | sort) <(git diff --name-only "$mb" HEAD | sort)
    ```
 
-   A file listed, or `gh pr view <number> --json mergeable` reads `CONFLICTING` → `git merge origin/<base>`, resolve only the conflicting files (regenerate a generated one with the repo's command instead of merging it by hand), commit, and push. Then verify once more as the next round (`round`, `prepare`, a brief limited to the checks and scenarios that the listed files and the resolution reach, the verifier): `bun $gate verify <that round>` must print green, else stop and report it. Nothing listed → go on.
+   A file listed, or `gh pr view <number> --json mergeable` reads `CONFLICTING` → dispatch one Opus subagent (medium) with the absolute path of `wt` to `git merge origin/<base>` and resolve only the conflicting files (regenerate a generated one with the repo's command instead of merging it by hand); then commit and push. Then verify once more as the next round (`round`, `prepare`, a brief limited to the checks and scenarios that the listed files and the resolution reach, the verifier): `bun $gate verify <that round>` must print green, else stop and report it. Nothing listed → go on.
 2. Checks. Wait for the PR checks ([harness.md](harness.md)); under T3 Code the wait ends the turn and the wake resumes at this step. A failing check → [CI red](#ci-red).
 3. Base again: the base may have moved during the wait. Run step 1's listing once more; a file listed → back to step 1.
 4. `stop` → print `PR #<number> ready to merge: checks green on <head>` and stop here.
@@ -226,7 +224,7 @@ Takes the ready PR to its merge. It runs for Merge, and for `stop`, which leaves
 A check that the loop's own verification passed fails on GitHub. Read its log (`gh pr checks <number>`, then `gh run view <run-id> --log-failed`) and sort it:
 
 - Infrastructure (a runner, network, or registry error, or a timeout in a step the diff does not reach) → `gh run rerun <run-id> --failed`, once, and wait again.
-- Repository (the PR's code fails the check) → dispatch one general-purpose subagent (Sonnet, medium) with the absolute path of `wt` and the failing log, to fix only what that check requires. Commit `fix(ci): <check>` and push. The code changed after the loop converged, so run the [Loop](#loop) for up to 2 more rounds; the verifier brief adds the failed check's command when the repo can run it locally. `converged` → resume [Land](#land) at step 1, without a second hand over. Anything else → stop and report it.
+- Repository (the PR's code fails the check) → dispatch one Opus subagent (medium) with the absolute path of `wt` and the failing log, to fix only what that check requires. Commit `fix(ci): <check>` and push. The code changed after the loop converged, so run the [Loop](#loop) for up to 2 more rounds; the verifier brief adds the failed check's command when the repo can run it locally. `converged` → resume [Land](#land) at step 1, without a second hand over. Anything else → stop and report it.
 
 A check that fails again after its rerun or its fix, or a fixer that changes nothing → stop and report the check with its log. The PR stays open and unmerged.
 

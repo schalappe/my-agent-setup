@@ -9,7 +9,7 @@ Three-axis review of the diff between `HEAD` and a fixed point the user supplies
 - **Spec**: does the code faithfully implement the originating issue / spec?
 - **Correctness**: does the changed code behave right for every caller, every state, and every failure path?
 
-The axes run as **parallel sub-agents** so they don't pollute each other's context, then this skill aggregates their findings. Each sub-agent is a headless peer process (`bun ~/.agents/skills/review-round/peer.ts`), never an in-session subagent: it runs on the model family that did not write the code (GPT-6.2 Sol through `codex exec` for Claude-written code, Claude Opus 5.5 through `claude -p` for GPT-written code), so it does not share the writer's blind spots. `peer.ts` takes the session's family as the writer's ([harness.md](../review-round/harness.md#writer-family)), which also covers a diff a human wrote. When another session's model wrote the diff, pass its family with `--writer claude|gpt` on every `peer.ts` call below. It runs in Claude Code or Codex, directly or under T3 Code.
+The axes run as **parallel sub-agents** so they don't pollute each other's context, then this skill aggregates their findings. Each sub-agent is a headless peer process (`bun ~/.agents/skills/review-round/peer.ts`), never an in-session subagent: it runs on GPT-6.2 Sol through `codex exec`, never on Claude Opus 5.5, which writes the code ([model roles](../review-round/harness.md#model-roles)), so it does not share the writer's blind spots. It runs in Claude Code, in Codex, or under T3 Code (Claude, Codex, or Gemini).
 
 The issue tracker should have been provided to you. If not, tell the user to run `/setup-repo`.
 
