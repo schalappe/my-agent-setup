@@ -31,7 +31,7 @@ sandbox when it fails.
 | Answer a subagent's question and let it continue | `SendMessage` | `followup_task` | — |
 | Run another skill (`tdd`, `branch-review`) | Skill tool | read that skill's `SKILL.md` and follow it | — |
 | Ask the user | ask tool (`AskUserQuestion`) | no tool waits for the answer outside Plan mode: ask in the reply and end the turn; the answer arrives as the next user message | — |
-| Run a long shell command and wait | shell call with `run_in_background`, then end the turn: its notification wakes you | `exec_command`, then `write_stdin` with empty input on the returned session until it exits; one poll lasts at most 5 minutes | Claude: `t3_background_wait` with the task id the shell call returned, before ending the turn |
+| Run a long shell command and wait | shell call with `run_in_background`, then end the turn: its notification wakes you | `exec_command`, then `write_stdin` with empty input on the returned session until it exits; one poll lasts at most 5 minutes | Claude: once the shell call's result is back, `t3_background_wait` in a later message with the task id read from that result, then end the turn |
 | Wait for a PR's checks | `gh pr checks <number> --watch`, run as a long shell command | the same | no `gh --watch`: `link_pull_request`, `watch_pull_request`, end the turn; the wake resumes the step that waited: read `gh pr checks <number>`, end the turn again while they run, then `unwatch_pull_request` before going on |
 
 A wait is one background task and its own completion signal: the notification in Claude Code, the command's exit in
