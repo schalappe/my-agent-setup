@@ -9,7 +9,6 @@ The roles are fixed. They never depend on which harness or session runs a skill:
 
 | Role | Model | How |
 |---|---|---|
-| Interlocutor and planning: talk with the user, write specs, tickets, and plans | Gemini 4 Neon | the T3 Code thread the user talks to |
 | All code: implementers, fixers, mergers | Claude Opus 5.5 | Opus subagent (below) |
 | Plan critique, review, verification, same-defect judgment | GPT-6.2 Sol | headless peer run through `peer.ts` |
 | Verdicts (green, converged, stalled, ready) | none | `gate.ts`, deterministic code over the recorded files |

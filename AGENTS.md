@@ -87,10 +87,10 @@ The rules below follow from two ideas. Read them as consequences, not as a check
 - Main owns scope, decisions, and acceptance. Delegate tool-heavy phases to the cheapest capable agent
   with the objective, scope, acceptance criteria, and required evidence. Money, security, and migration
   decisions stay with Main.
-- Model roles are fixed, whatever harness runs: Gemini 4 Neon talks with me and plans; Claude Opus 5.5
-  writes all code and fixes; GPT-6.2 Sol critiques plans, reviews, verifies, and judges whether two findings
-  are the same defect; deterministic gates give the verdicts. "Cheapest capable agent" covers only read-only
-  legwork. Routing: `~/.agents/skills/review-round/harness.md#model-roles`.
+- Model roles are fixed, whatever harness runs: Claude Opus 5.5 writes all code and fixes; GPT-6.2 Sol
+  critiques plans, reviews, verifies, and judges whether two findings are the same defect; deterministic
+  gates give the verdicts. "Cheapest capable agent" covers only read-only legwork.
+  Routing: `~/.agents/skills/review-round/harness.md#model-roles`.
 - Main may run read-only checks that finish in about 30 seconds (link checks, workflow linters, `git`
   status), one focused test file, typecheck, and formatters. Gates, full test suites, browser, API, and
   container checks go to the verifier (GPT-6.2 Sol, run with `review-round`'s
