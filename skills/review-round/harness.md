@@ -10,15 +10,20 @@ The roles are fixed. They never depend on which harness or session runs a skill:
 | Role | Model | How |
 |---|---|---|
 | All code: implementers, fixers, mergers | Claude Opus 5.5 | Opus subagent (below) |
-| Plan critique, review, verification, same-defect judgment | GPT-6.2 Sol | headless peer run through `peer.ts` |
+| Plan critique, review, verification | GPT-6.2 Sol | T3 `delegate_task` (`codex`, `gpt-6.2-sol`), or `peer.ts` outside T3 |
+| Same-defect judgment | GPT-6.2 Sol | headless `peer.ts`, called inside `gate.ts` |
 | Verdicts (green, converged, stalled, ready) | none | `gate.ts`, deterministic code over the recorded files |
 
-- **Peer runs** (verifier, reviewers, plan critic, same-defect judge) are headless `codex exec` processes launched by
-  `peer.ts`, never in-session subagents. The process leaves a trace (`trace.ts` reads it) that proves which files the
-  peer opened. `peer.ts` takes no writer argument: the peer is GPT-6.2 Sol whoever wrote the code, including a human.
-- **Plan critique**: before a plan, spec, or ticket set goes to implementation, write it to a file and run
-  `bun ~/.agents/skills/review-round/peer.ts --access read --trace <dir>/critique.jsonl < <plan file>` with a prompt
-  that asks for the plan's gaps, risks, and wrong assumptions. The planner answers each point or revises the plan.
+- **GPT-6.2 Sol peer** (plan critic, verifier, reviewers): under T3 Code (Claude, Codex, or Gemini), call
+  `orchestrator_capabilities` once per thread, then `delegate_task` with
+  `target: { providerInstanceId: "codex", model: "gpt-6.2-sol", options: { reasoningEffort: "high" } }`,
+  `mode: "async"`, and follow its `next`. Outside T3 Code, run headless `codex exec` through `peer.ts`. `trace.ts`
+  reads both `t3_thread_read(view: "activity")` dumps and `peer.ts` JSONL traces, so `gate.ts` proves which files each
+  reviewer opened under either route. The peer is always GPT-6.2 Sol whoever wrote the code, including a human.
+- **Plan critique**: before a plan, spec, or ticket set goes to implementation, write it to a file and dispatch a
+  read-only GPT-6.2 Sol peer (no code edits) with the plan file path, asking for gaps, risks, and wrong assumptions.
+  Outside T3 Code, run `bun ~/.agents/skills/review-round/peer.ts --access read --trace <dir>/critique.jsonl < <plan file>`.
+  The planner answers each point or revises the plan.
 - **Opus subagents** write every change. The session never edits code itself in these skills.
 - **The gate** turns observed results into verdicts. GPT-6.2 Sol only answers one narrow question for it (are two
   findings the same defect?), and the gate keeps each answer in `same-defect.json`, so its verdict over the same files
@@ -35,6 +40,7 @@ then needs an escalation. `peer.ts --check` runs the peer once and names the san
 | Operation the skills name | Claude Code | Codex, or Gemini, under T3 Code | Codex without T3 Code |
 |---|---|---|---|
 | Opus subagent at a set effort | Agent tool, `model: "opus"` and `effort` | `delegate_task` to the Claude provider, model `claude-opus-5-5`, `effort` in `target.options`; follow its `next` | no route: stop at preflight and say so |
+| GPT-6.2 Sol peer (plan critique, review, verify) | under T3 Code: `delegate_task` to `codex`, model `gpt-6.2-sol`, `reasoningEffort: "high"` in `target.options`, `mode: "async"`; outside T3: `bun ~/.agents/skills/review-round/peer.ts` | `delegate_task` to `codex`, model `gpt-6.2-sol`, `reasoningEffort: "high"` in `target.options`, `mode: "async"`; follow its `next` | `bun ~/.agents/skills/review-round/peer.ts` |
 | Answer a subagent's question and let it continue | `SendMessage` | follow the delegate's `next` | — |
 | Run another skill (`tdd`, `branch-review`) | Skill tool | read that skill's `SKILL.md` and follow it | the same |
 | Ask the user | ask tool (`AskUserQuestion`) | ask in the reply and end the turn; the answer arrives as the next user message | the same |

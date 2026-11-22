@@ -14,15 +14,15 @@ End = the word `send` or `stop` given with the invocation, or else `ask`. It dec
 
 Each loop runs in the PR branch's own worktree (a second checkout of the same repository), never in a checkout another session uses. That is what lets several loops, and other agents, run at once from the same main checkout without `git switch`.
 
-The roles are fixed ([harness.md](harness.md#model-roles)): Claude Opus 5.5 writes every fix; GPT-6.2 Sol verifies, reviews, and judges repeats, so the checks do not share the writer's blind spots. The **peer** (the verifier and the reviewers) runs in headless `codex exec` processes launched by `peer=~/.agents/skills/review-round/peer.ts`, whatever harness runs this file. The orchestration (this file) runs on the session's model and writes no code. Set every other model at the call; never rely on the session default:
+The roles are fixed ([harness.md](harness.md#model-roles)): Claude Opus 5.5 writes every fix; GPT-6.2 Sol verifies, reviews, and judges repeats, so the checks do not share the writer's blind spots. Under T3 Code, the **peer** (the verifier and the reviewers) runs via `delegate_task` on `codex` / `gpt-6.2-sol` ([harness.md](harness.md#harness-operations)); outside T3 Code (and for `same-defect` inside `gate.ts`), it runs in headless `codex exec` processes launched by `peer=~/.agents/skills/review-round/peer.ts`. The orchestration (this file) runs on the session's model and writes no code. Set every other model at the call; never rely on the session default:
 
 | Step | Model, effort | How |
 |---|---|---|
-| Verify | the peer | `bun $peer` with the [verifier](#verifier) prompt |
+| Verify | the peer | T3 `delegate_task` (`codex`, `gpt-6.2-sol`, `reasoningEffort: "high"`), or `bun $peer` outside T3 ([verifier](#verifier)) |
 | Fix (red) | Opus 5.5, medium | Opus subagent ([harness.md](harness.md#harness-operations)) |
-| Review | the peer | `bun $peer`, two processes per slice: correctness and security |
+| Review | the peer | two peers per slice (correctness and security): T3 `delegate_task`, or `bun $peer` outside T3 |
 | Fix (findings) | Opus 5.5, high | Opus subagent |
-| Same defect | the peer | the gate runs it; the verdict is the gate's |
+| Same defect | the peer | the gate runs `peer.ts`; the verdict is the gate's |
 
 Every fixer below (red fix, findings fix, minor pass, CI fix, base merge) is an Opus subagent. A session that cannot start one ([harness.md](harness.md#harness-operations)) stops at preflight. A Codex or Antigravity thread runs in full access: its sandbox blocks the peer's network.
 
@@ -43,7 +43,7 @@ Gate: `gate=~/.agents/skills/review-round/gate.ts`; its header documents every c
   - Record who made it, for the [hand over](handover.md): `dir` as in [Resolve context](#resolve-context-every-round), `mkdir -p "$dir"`, then `echo created > "$dir/worktree-created"` when the loop created it, else `[ -f "$dir/worktree-created" ] || echo existing > "$dir/worktree-created"`.
   - In `wt`: the repo's frozen install (e.g. `bun install --frozen-lockfile`) before the first commit, since git hooks run from the worktree and fail without it; then the bootstrap the repo documents for a fresh checkout (codegen, the local env files its `AGENTS.md` lists), since a stale generated client or a missing `.env` turns the first verification red.
 - End: `echo <ask|stop|send> > "$dir/end"`, replacing an earlier run's. The hand over reads it there, since a wait for the PR's checks can end the turn.
-- `command -v bun`, `bun $peer --check` (one short real run of the peer: it prints `codex gpt-6.2-sol`, or what failed), and the Opus subagent route for this session ([harness.md](harness.md#harness-operations)). One fails → stop and say which one.
+- `command -v bun`, `bun $peer --check` (still needed for `same-defect` inside `gate.ts`, and outside T3), under T3 Code `orchestrator_capabilities` confirming `codex` (`gpt-6.2-sol`), and the Opus subagent route for this session ([harness.md](harness.md#harness-operations)). One fails → stop and say which one.
 - Under T3 Code, link the PR to the thread with `link_pull_request`: the loop pushes to it.
 
 Every shell command from here on, the gate included, runs from `wt` (start each call with `cd "$wt" &&`: the shell may reset its directory between calls), and sets `peer`, `gate`, `dir`, `N`, and `p` again for the same reason. Every path given to a file tool or a subagent is absolute under `wt`: file tools resolve relative paths against the main checkout.
@@ -116,7 +116,10 @@ Before running the verifier once more in the same round, archive its last run wi
 
 ### Verifier
 
-The verifier is the peer in a headless process, never an in-session subagent: those run on the session's or the writer's model. With the brief complete in `$p/verify.brief`, run it from `wt` in one long shell call and wait for it ([harness.md](harness.md)):
+The verifier is the GPT-6.2 Sol peer, never an in-session subagent on the writer's model. With the brief complete in `$p/verify.brief`:
+
+- **Under T3 Code**: dispatch one `delegate_task` (`codex`, `gpt-6.2-sol`, `reasoningEffort: "high"`, `mode: "async"`, follow its `next`). Instruct it to read `~/.agents/skills/review-round/verifier.md` and `$p/verify.brief` (both absolute paths) and work only in `$wt`, running every check through `bun $gate exec $N -- '<command>'` and writing `verify-$N.json`.
+- **Outside T3 Code**: run it from `wt` in one long shell call and wait for it ([harness.md](harness.md)):
 
 ```bash
 cd "$wt"
@@ -125,19 +128,22 @@ cat ~/.agents/skills/review-round/verifier.md "$p/verify.brief" \
 jq -r .result "$p/verify.out.json"
 ```
 
-`--access full` runs it without permission prompts or sandbox: gates, Docker, and browsers write outside `wt` (build-tool, package-manager, and browser caches). `verifier.md` keeps it from editing sources and runs every check through `bun $gate exec`, whose records are what the gate compares the verify file against. The printed report is for the hand-off; the verdict is still `bun $gate verify $N`. A run with no report or no `verify-N.json`: rerun once, then stop and show the tail of `verify.log`.
+`--access full` (or T3 full-access) runs it without permission prompts or sandbox: gates, Docker, and browsers write outside `wt` (build-tool, package-manager, and browser caches). `verifier.md` keeps it from editing sources and runs every check through `bun $gate exec`, whose records are what the gate compares the verify file against. The printed report is for the hand-off; the verdict is still `bun $gate verify $N`. A run with no report or no `verify-N.json`: rerun once, then stop and show the failure (or the tail of `verify.log`).
 
 ## 2. Review
 
 Recompute `tree`. It must equal `tree` in `verify-N.json` (the code reviewed is the code verified); otherwise re-run step 1.
 
-Reviewers run on the peer in separate headless processes: GPT-6.2 Sol, never the writer's Opus, a fresh context with no conversation, read-only tools (`--access read`), and only its slice's patches. That separation is what keeps the review from sharing the writer's blind spots. `--schema` gives the output's shape: the engine enforces it, and the gate checks it again.
+Reviewers run on the GPT-6.2 Sol peer in separate fresh contexts with no conversation, read-only (no edits), and only their slice's patches. That separation is what keeps the review from sharing the writer's blind spots. The output follows `~/.agents/skills/review-round/reviewer-schema.json`, and the gate checks both the schema and that every file in the slice was opened.
 
-Write the prompts: `slices=$(bun $gate slice $N)`. It packs `files.txt` into slices of at most 2000 changed lines (a bigger single file is its own slice), writes two prompts per slice letter `S`, `$p/review-S.prompt` (correctness) and `$p/review-sec-S.prompt` (security, checked against the same list as the `hardening` skill), and prints their names one per line (`A`, `sec-A`, `B`, `sec-B`); the loop below runs each name as its own process. The loop reads lines rather than splitting `$slices` on spaces, because zsh does not split an unquoted variable into words. Each prompt carries the reviewer task text, the PR body, the checks and scenarios that passed, the full `files.txt` for orientation, the generated files (lockfiles, generated clients), listed as generated and not reviewed, the findings earlier rounds rejected or recorded as pre-existing (so the reviewer does not repeat them without new evidence), and the absolute paths of that slice's patches: never the whole diff or the conversation.
+Write the prompts: `slices=$(bun $gate slice $N)`. It packs `files.txt` into slices of at most 2000 changed lines (a bigger single file is its own slice), writes two prompts per slice letter `S`, `$p/review-S.prompt` (correctness) and `$p/review-sec-S.prompt` (security, checked against the same list as the `hardening` skill), and prints their names one per line (`A`, `sec-A`, `B`, `sec-B`); each name runs as its own peer. Each prompt carries the reviewer task text, the PR body, the checks and scenarios that passed, the full `files.txt` for orientation, the generated files (lockfiles, generated clients), listed as generated and not reviewed, the findings earlier rounds rejected or recorded as pre-existing (so the reviewer does not repeat them without new evidence), and the absolute paths of that slice's patches: never the whole diff or the conversation.
 
 The first reviewed round covers every file. Later rounds are re-reviews: only the files changed since the previous reviewed round, plus the files of its rejected findings, so the loop checks its own fixes instead of finding older bugs each round. No names printed → nothing changed since the last review: go to step 4.
 
-Then run the processes 8 at a time in one long shell call from `wt` and wait for it. The patches live under the main checkout's `.git`, outside `wt`, so `--add-dir "$p"` is what lets the reviewer read them: without it every patch read is denied and the reviewer returns zero findings it could not check.
+Run the reviewers (up to 8 in parallel), then `bun $gate reviewed $N`:
+
+- **Under T3 Code**: for each slice name `S`, dispatch a `delegate_task` (`codex`, `gpt-6.2-sol`, `reasoningEffort: "high"`, `mode: "async"`), instructing it to read and follow `$p/review-$S.prompt` in `$wt` (read-only: do not edit any file), open every patch listed, and reply with ONLY the JSON object matching `~/.agents/skills/review-round/reviewer-schema.json`. Follow their `next`. Once each finishes, call `t3_thread_read(threadId, view: "activity", afterPosition: -1, limit: 100, maxCharsPerItem: 20000)` (paginating with `afterPosition: nextPosition` while `hasMore` is true) and save the returned JSON to `$p/review-$S.jsonl` (one page per line if paginated), then run `bun $gate reviewed $N`.
+- **Outside T3 Code**: run the processes 8 at a time in one long shell call from `wt` and wait for it. The patches live under the main checkout's `.git`, outside `wt`, so `--add-dir "$p"` is what lets the reviewer read them:
 
 ```bash
 cd "$wt"
@@ -151,7 +157,7 @@ wait
 bun $gate reviewed $N
 ```
 
-The trace `review-S.jsonl` is the evidence that a review happened: a reviewer that answers without opening its files returns zero findings that look exactly like a clean review. `bun $gate reviewed $N` prints, per process, its findings, the share of its slice's files it opened, its tool calls, and its engine. The `codex` reviewer has no read tool, so its opened files come from its file-printing shell commands (`cat`, `sed`, …), checked against the printed output. Exit 0 → it wrote every `review-S.json` from the traces. Exit 1 → rerun once the processes named on its `rerun:` line (a missing trace, no schema result, or a file it never opened), then run it again. Still exit 1 → stop the loop and show those lines and the tail of each failing `review-S.log`. Print those per-process lines after the round line, so the reader sees what each reviewer read. Never review a slice yourself or through a subagent, and never write `review-S.json`: only the gate writes it, from the peer's trace. Never edit a prompt: change the task text in `gate.ts`.
+The trace `review-S.jsonl` (whether a T3 activity dump or a `peer.ts` JSONL trace) is the evidence that a review happened: a reviewer that answers without opening its files returns zero findings that look exactly like a clean review. `bun $gate reviewed $N` prints, per reviewer, its findings, the share of its slice's files it opened, its tool calls, and its engine. The `codex` reviewer has no read tool, so its opened files come from its file-printing shell commands (`cat`, `sed`, …), checked against the printed output. Exit 0 → it wrote every `review-S.json` from the traces. Exit 1 → rerun once the slices named on its `rerun:` line (a missing trace, no schema result, or a file it never opened), then run it again. Still exit 1 → stop the loop and show those lines and the failure details. Print those per-reviewer lines after the round line, so the reader sees what each reviewer read. Never review a slice yourself or through an Opus subagent, and never write `review-S.json`: only the gate writes it, from the peer's trace. Never edit a prompt: change the task text in `gate.ts`.
 
 ## 3. Fix
 

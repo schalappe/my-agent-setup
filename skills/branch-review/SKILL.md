@@ -9,7 +9,7 @@ Three-axis review of the diff between `HEAD` and a fixed point the user supplies
 - **Spec**: does the code faithfully implement the originating issue / spec?
 - **Correctness**: does the changed code behave right for every caller, every state, and every failure path?
 
-The axes run as **parallel sub-agents** so they don't pollute each other's context, then this skill aggregates their findings. Each sub-agent is a headless peer process (`bun ~/.agents/skills/review-round/peer.ts`), never an in-session subagent: it runs on GPT-6.2 Sol through `codex exec`, never on Claude Opus 5.5, which writes the code ([model roles](../review-round/harness.md#model-roles)), so it does not share the writer's blind spots. It runs in Claude Code, in Codex, or under T3 Code (Claude, Codex, or Gemini).
+The axes run as **parallel sub-agents** so they don't pollute each other's context, then this skill aggregates their findings. Each sub-agent runs on GPT-6.2 Sol, never on Claude Opus 5.5, which writes the code ([model roles](../review-round/harness.md#model-roles)), so it does not share the writer's blind spots: under T3 Code via `delegate_task` (`codex`, `gpt-6.2-sol`), and outside T3 Code via headless `bun ~/.agents/skills/review-round/peer.ts`. It runs in Claude Code, in Codex, or under T3 Code (Claude, Codex, or Gemini).
 
 The issue tracker should have been provided to you. If not, tell the user to run `/setup-repo`.
 
@@ -21,7 +21,7 @@ Whatever the user said is the fixed point (a commit SHA, branch name, tag, `main
 
 Capture the diff command once: `git diff <fixed-point>...HEAD` (three-dot, so the comparison is against the merge-base). Also note the list of commits via `git log <fixed-point>..HEAD --oneline`.
 
-Before going further, confirm the fixed point resolves (`git rev-parse <fixed-point>`), the diff is non-empty, and `bun ~/.agents/skills/review-round/peer.ts --check` passes (one short real run of the peer: it prints the engine and model, or what failed). A bad ref, an empty diff, or a missing reviewer should fail here, not inside three parallel sub-agents.
+Before going further, confirm the fixed point resolves (`git rev-parse <fixed-point>`), the diff is non-empty, and the GPT-6.2 Sol route works: under T3 Code, `orchestrator_capabilities` confirms `codex` (`gpt-6.2-sol`); outside T3 Code, `bun ~/.agents/skills/review-round/peer.ts --check` passes (one short real run of the peer). A bad ref, an empty diff, or a missing reviewer should fail here, not inside three parallel sub-agents.
 
 Exclude generated files from the text diff: anything `git check-attr linguist-generated diff` marks generated or `-diff`, plus obviously generated API clients and specs. Append `':(exclude)<path>'` pathspecs to the diff command and list the excluded paths separately; reviewers check them with targeted queries (`git diff --stat`, `git grep` for a specific symbol) instead of reading them.
 
@@ -49,7 +49,10 @@ The smells themselves are in [smells.md](smells.md); step 4 hands that file to t
 
 ### 4. Spawn the three sub-agents in parallel
 
-Write each prompt to a file in a fresh directory outside the repo (`d=$(mktemp -d)`; `standards.prompt`, `spec.prompt`, `correctness.prompt`), with the spec saved beside them when it came from the tracker. Prompts carry paths, never your conversation. Run the three together, from the repository root, as one long shell command, and wait for it the way [harness.md](../review-round/harness.md#harness-operations) says (Correctness runs tests and can outlast a foreground call):
+Write each prompt to a file in a fresh directory outside the repo (`d=$(mktemp -d)`; `standards.prompt`, `spec.prompt`, `correctness.prompt`), with the spec saved beside them when it came from the tracker. Prompts carry paths, never your conversation.
+
+- **Under T3 Code**: dispatch the axes in parallel via `delegate_task` (`codex`, `gpt-6.2-sol`, `reasoningEffort: "high"`, `mode: "async"`), each instructed to read and follow `$d/<axis>.prompt` from the repository root (without editing tracked files in the main checkout; Correctness uses a throwaway worktree for mutation checks). Follow their `next`. Each completed delegate's summary is that axis's report. If an axis failed or its `t3_thread_read(view: "activity")` shows 0 tool calls, rerun that axis once, then report it as failed. Never write an axis's report yourself.
+- **Outside T3 Code**: run the three together, from the repository root, as one long shell command, and wait for it the way [harness.md](../review-round/harness.md#harness-operations) says (Correctness runs tests and can outlast a foreground call):
 
 ```bash
 for axis in standards spec correctness; do
@@ -59,7 +62,7 @@ done
 wait
 ```
 
-Each report is `jq -r .result "$d/<axis>.json"`. `--add-dir "$d"` lets the reviewers read the spec and gate files there: their file tools are confined to the repository otherwise. A shell is allowed (`--access shell`) because every axis reads the diff with `git`, and Correctness also runs tests in a throwaway worktree. A report that is missing, has `.is_error` true, or has `.tool_calls` at 0 (an axis that answered without reading anything looks exactly like a clean review): rerun that axis once, then report it as failed with the tail of its log. Print each axis's `.tool_calls` and `.opened` (the files it read whole) beside its report, so the reader sees what it read. Never write an axis's report yourself.
+Outside T3, each report is `jq -r .result "$d/<axis>.json"`. `--add-dir "$d"` lets the reviewers read the spec and gate files there: their file tools are confined to the repository otherwise. A shell is allowed (`--access shell`) because every axis reads the diff with `git`, and Correctness also runs tests in a throwaway worktree. A report that is missing, has `.is_error` true, or has `.tool_calls` at 0 (an axis that answered without reading anything looks exactly like a clean review): rerun that axis once, then report it as failed with the tail of its log. Print each axis's `.tool_calls` and `.opened` (the files it read whole) beside its report, so the reader sees what it read. Never write an axis's report yourself.
 
 Each brief ends with: "Report a finding only after reproducing it (command and output) or citing the code that proves it (file, line, quoted lines)."
 

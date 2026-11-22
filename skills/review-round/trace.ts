@@ -4,6 +4,9 @@
 // claude traces. The two formats are told apart by their event types:
 //   claude  `claude -p --output-format stream-json`: `assistant` events with `tool_use` blocks, a final `result`.
 //   codex   `codex exec --json`: `item.*` events (`command_execution`, `agent_message`), `turn.completed|failed`.
+//   t3      `t3_thread_read(view: "activity")` of a reviewer run via delegate_task: one JSON object, or JSONL with one
+//           page per line, each `{ thread, items }`. Its commands are read like codex's: the first line of an item's
+//           text is the command, the rest its output. Its engine is the child thread's provider.
 // A file counts as opened only through a whole-file read: claude's Read, or a codex shell command whose program
 // prints files (cat, sed, nl, head, tail, …), its glob arguments matched as the shell would, or whose output holds a
 // file's whole text (`printed`, checked by the gate against each patch). Codex has no read tool, so its evidence is the
@@ -14,7 +17,7 @@ export type Engine = "claude" | "codex";
 export type Trace = {
   engine: Engine;
   opened: string[];
-  // The output of each command that exited 0 (codex only): a file whose whole text appears in one was printed, however
+  // The output of each command that exited 0 (codex and t3 only): a file whose whole text appears in one was printed, however
   // the command named it (a glob, a loop, a pipe), which is stronger evidence than the command's words.
   printed: string[];
   text: string;
@@ -58,8 +61,65 @@ export function parseJsonAnswer(text: string): unknown {
 }
 
 export function readTrace(jsonl: string): Trace {
+  const pages = t3Pages(jsonl);
+  if (pages) return readT3(pages);
   const events = parseEvents(jsonl);
   return engineOf(events) === "codex" ? readCodex(events) : readClaude(events);
+}
+
+type T3Page = { thread: Record<string, unknown>; items: unknown[] };
+
+const isT3Page = (value: unknown): value is T3Page =>
+  isObject(value) && isObject(value.thread) && Array.isArray(value.items);
+
+// The pages of a T3 activity dump, or undefined when the text is not one. A single object may be pretty-printed, so the
+// whole text is tried before its lines.
+function t3Pages(text: string): T3Page[] | undefined {
+  try {
+    const whole = JSON.parse(text) as unknown;
+    return isT3Page(whole) ? [whole] : undefined;
+  } catch {
+    // not one JSON value: JSONL, read line by line below
+  }
+  const events = parseEvents(text);
+  return events.length > 0 && events.every(isT3Page) ? events : undefined;
+}
+
+function readT3(pages: T3Page[]): Trace {
+  // Pages may overlap; a repeated position keeps its latest copy, in the place it first appeared.
+  const byPosition = new Map<unknown, Record<string, unknown>>();
+  const unpositioned: Record<string, unknown>[] = [];
+  for (const item of pages.flatMap((page) => page.items).filter(isObject)) {
+    if (typeof item.position === "number") byPosition.set(item.position, item);
+    else unpositioned.push(item);
+  }
+  const items = [...byPosition.values(), ...unpositioned];
+  const commands = items.filter((item) => item.type === "command_execution" && isString(item.text));
+  const succeeded = commands.filter((item) => item.status === "completed");
+  const opened: string[] = [];
+  const printed: string[] = [];
+  for (const item of succeeded) {
+    const text = item.text as string;
+    const newline = text.indexOf("\n");
+    const firstLine = newline === -1 ? text : text.slice(0, newline);
+    const output = newline === -1 ? "" : text.slice(newline + 1);
+    opened.push(...codexReads(firstLine.startsWith("$ ") ? firstLine.slice(2) : firstLine));
+    if (output) printed.push(output);
+  }
+  const answer = items.findLast(
+    (item) => item.type === "assistant_message" && item.status === "completed" && isString(item.text),
+  );
+  const text = isString(answer?.text) ? answer.text : "";
+  const lastThread = pages[pages.length - 1].thread;
+  return {
+    engine: lastThread.providerInstanceId === "claudeAgent" ? "claude" : "codex",
+    opened,
+    printed,
+    text,
+    output: parseJsonAnswer(text),
+    toolCalls: commands.length,
+    isError: lastThread.status !== "completed",
+  };
 }
 
 function readClaude(events: Event[]): Trace {
