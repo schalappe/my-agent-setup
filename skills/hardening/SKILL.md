@@ -95,13 +95,17 @@ Collect each field against a stated purpose. Build a working deletion path (stor
 
 ## Verification
 
-- [ ] Trust boundaries and STRIDE threats named; abuse cases have tests.
-- [ ] Every external input is schema-validated at the boundary; queries are parameterized.
-- [ ] Every protected route checks authentication and per-resource authorization.
-- [ ] Missing config or secrets fail at startup; no secret in source, logs, or history.
+Before shipping, name the trust boundaries and the STRIDE threats on each, and give every abuse case a test.
+
+The `- [ ]` list below is also the security reviewer's checklist: `review-round/gate.ts` reads it into that prompt, so keep one `- [ ] ` bullet per line under this heading.
+
+- [ ] Input crossing a trust boundary (request, upload, webhook, queue, third-party response, another process's arguments or files) is schema-validated at the boundary, and downstream code uses only the parsed value.
+- [ ] Every protected route or action checks authentication and per-resource authorization: the caller owns or was granted this record, not merely logged in.
+- [ ] SQL, NoSQL, and shell calls are parameterized; untrusted data never reaches eval, innerHTML, a shell, or a file path.
+- [ ] No secret in source, logs, error bodies, or git history; required config and secrets fail at startup instead of falling back.
 - [ ] Error responses expose no internals.
-- [ ] Server-side fetches pass the SSRF allowlist and private-address check.
-- [ ] Destructive operations check allowlisted root, depth, and ownership on the resolved path.
-- [ ] Money-moving writes: intent-derived key, atomic claim, 422 on payload mismatch, unknown outcome recorded.
-- [ ] Dependency audit has no reachable unmitigated critical/high finding; install scripts reviewed.
-- [ ] LLM output validated and encoded before use.
+- [ ] Server-side fetches of user-influenced URLs allowlist scheme and host, reject private, loopback, and link-local addresses, and forbid redirects.
+- [ ] Deletes, moves, and overwrites on derived paths check an allowlisted root, a depth below it, and ownership on the resolved path.
+- [ ] Money-moving writes derive the idempotency key from the intent, claim it atomically, reject the same key with a different payload (422), and record an unknown outcome instead of retrying blindly.
+- [ ] New or bumped dependencies leave the package manager's audit with no reachable unmitigated critical or high finding, and their install scripts were reviewed.
+- [ ] LLM output is validated and encoded before it reaches SQL, a shell, the DOM, or a path; permissions are enforced in code, not in the prompt.

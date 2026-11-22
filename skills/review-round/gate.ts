@@ -135,7 +135,11 @@ const FINDING_RULES = `For each finding, \`trigger\` names the input or state th
 
 Severity: critical = data loss, security, or crash on the main path; major = incorrect behavior or contract violation; minor = real but low-impact defect; nit = anything else, including a stale recipe or doc of a dev tool (a \`verify-<app>\` skill, a script's README) that the product never runs.`;
 
-const REVIEW_TASK = `Review your slice of this pull request diff against its stated intent. Open every patch file listed in <slice>, and surrounding source when needed: the gate rejects a review whose trace never opens one of them. Report only defects you can point to in those patches: wrong logic, contract violations against the intent, missing error handling at trust boundaries, data loss, missing or incorrect tests for changed behavior. Security has its own reviewer. If the repository's AGENTS.md names a review checklist, apply its rules to your slice. Do not report style, naming, formatting, or hypothetical future needs. Zero findings is a valid result.
+// What the gate accepts as proof that a reviewer read a patch (trace.ts): a search or a loop over a shell variable is
+// not a read, and reviewers skipped large test patches that way, which no rerun changed.
+const OPEN_RULE = `Print every patch file listed in <slice> in full, test files included, and open surrounding source when needed. Use \`cat\` with each patch path, or a glob of it, written in the command itself: the gate rejects a review whose trace leaves one patch unprinted, and it does not count a search (\`rg\`, \`grep\`), a count (\`wc\`), or a loop that reads a shell variable (\`for f in …; do cat "$f"\`).`;
+
+const REVIEW_TASK = `Review your slice of this pull request diff against its stated intent. ${OPEN_RULE} Report only defects you can point to in those patches: wrong logic, contract violations against the intent, missing error handling at trust boundaries, data loss, missing or incorrect tests for changed behavior. Security has its own reviewer. If the repository's AGENTS.md names a review checklist, apply its rules to your slice. Do not report style, naming, formatting, or hypothetical future needs. Zero findings is a valid result.
 
 Also interrogate: a state-changing operation that breaks when it runs twice or after a crash halfway; a guard, retry, cast, or fallback that hides a broken invariant instead of fixing its cause; a check that reads a proxy (cache, mtime, self-report) instead of the real value. For a possible null or bad input, trace the caller before reporting it.
 
@@ -145,24 +149,36 @@ When the diff changes launch config, routes, or seed data and the repository has
 
 ${FINDING_RULES}`;
 
+// Returns the `- [ ] ` bullets under `## Verification` of the hardening skill as plain `- ` lines.
+// Throws when none is found: a security reviewer must never run with an empty checklist.
+export function securityChecklist(markdown: string): string[] {
+  const lines = markdown.split("\n");
+  const heading = lines.findIndex((line) => line.trimEnd() === "## Verification");
+  if (heading === -1) throw new Error("hardening/SKILL.md: no `## Verification` heading to read the security checklist from");
+  const next = lines.findIndex((line, i) => i > heading && /^#{1,6} /.test(line));
+  const checks = lines
+    .slice(heading + 1, next === -1 ? undefined : next)
+    .filter((line) => line.startsWith("- [ ] "))
+    .map((line) => `- ${line.slice("- [ ] ".length).trim()}`);
+  if (checks.length === 0) throw new Error("hardening/SKILL.md: no `- [ ] ` bullet under `## Verification`");
+  return checks;
+}
+
 // The security pass runs as its own reviewer on the same slices: one prompt that covers everything dilutes it.
-// The checks mirror the Verification list of the hardening skill, which governs the same code at build time.
-const SECURITY_TASK = `Review your slice of this pull request diff for security defects only. Open every patch file listed in <slice>, and surrounding source when needed: the gate rejects a review whose trace never opens one of them. Report a defect only when you can trace untrusted input or an unauthorized caller to the patched code; a missing control that no reachable input exercises is not a finding. Zero findings is a valid result.
+// The checks are read from the Verification list of the hardening skill, which governs the same code at build time,
+// so the two never drift. Built by `slice` only, so a broken hardening file fails that command and no other.
+export function securityTask(): string {
+  const checks = securityChecklist(readFileSync(new URL("../hardening/SKILL.md", import.meta.url), "utf8"));
+  return `Review your slice of this pull request diff for security defects only. ${OPEN_RULE} Report a defect only when you can trace untrusted input or an unauthorized caller to the patched code; a missing control that no reachable input exercises is not a finding. Zero findings is a valid result.
 
 Check the patches against each of these:
-- Input crossing a trust boundary (request, upload, webhook, queue, third-party response, another process's arguments or files) is schema-validated at the boundary, and downstream code uses only the parsed value.
-- Every protected route or action checks authentication and per-resource authorization: the caller owns or was granted this record, not merely logged in.
-- SQL, NoSQL, and shell calls are parameterized; untrusted data never reaches eval, innerHTML, a shell, or a file path.
-- No secret in source, logs, or error bodies; required config and secrets fail at startup instead of falling back; error responses expose no internals.
-- Server-side fetches of user-influenced URLs allowlist scheme and host, reject private, loopback, and link-local addresses, and forbid redirects.
-- Deletes, moves, and overwrites on derived paths check an allowlisted root, a depth below it, and ownership on the resolved path.
-- Money-moving writes derive the idempotency key from the intent, claim it atomically, reject the same key with a different payload, and record an unknown outcome instead of retrying blindly.
-- LLM output is validated and encoded before it reaches SQL, a shell, the DOM, or a path; permissions are enforced in code, not in the prompt.
-- New or bumped dependencies in a manifest of your slice: install scripts and the lockfile diff (its patch is listed under <generated>) hold only the intended packages.
+${checks.join("\n")}
+- New or bumped dependencies in a manifest of your slice: the lockfile diff (its patch is listed under <generated>) holds only the intended packages.
 
 A security defect reachable from a trust boundary is critical.
 
 ${FINDING_RULES}`;
+}
 
 const toplevel = async (cwd = process.cwd()): Promise<string> => (await $`git rev-parse --show-toplevel`.cwd(cwd).text()).trim();
 
@@ -443,6 +459,7 @@ async function slice(round: string): Promise<string[]> {
   const roundDir = `${dir}/round-${round}`;
   const { result, verify, known = [] } = await readVerify(dir, round);
   if (result !== "green") throw new Error(`round ${round} is ${result}; only a green round is reviewed`);
+  const security = securityTask();
   const earlier = await earlierReviewedRounds(dir, round);
   const previous = earlier.at(-1);
   const kept = await reReviewPaths(previous, verify.tree);
@@ -471,7 +488,7 @@ async function slice(round: string): Promise<string[]> {
     }
     const context = `<intent>\n${intent}\n</intent>\n<checks_passed>\n${checks}\n</checks_passed>\n<scope>\n${scope}\n</scope>\n<already_judged>\n${judged || "none"}\n</already_judged>\n<files>\n${files.trim()}\n</files>\n<generated>\n${generatedList || "none"}\n</generated>\n<slice>\n${patches.join("\n")}\n</slice>\n`;
     await Bun.write(`${roundDir}/review-${name}.prompt`, `${REVIEW_TASK}\n\n${context}`);
-    await Bun.write(`${roundDir}/review-sec-${name}.prompt`, `${SECURITY_TASK}\n\n${context}`);
+    await Bun.write(`${roundDir}/review-sec-${name}.prompt`, `${security}\n\n${context}`);
     await Bun.write(`${roundDir}/slice-${name}.txt`, `${paths.join("\n")}\n`);
     names.push(name, `sec-${name}`);
   }
