@@ -7,10 +7,11 @@
 //   round-N.json       written by `record` only; noise.ts and the verdict read it.
 //   verify-N.json      written by the verifier (contract in verifier.md) or by `reuse`, never by the skill. The round's
 //                      verdict is derived here from it. verify-0.json is the implement skill's final verification,
-//                      written before the loop; its exec records live in round-0/.
-//   round-N/           files.txt, patches/, base (`prepare`); review prompts, slice-<S>.txt, slices (`slice`);
-//                      review-<S>.json (`reviewed`); verify-attempt-<A>.json (`attempt`); exec/<k>.json and
-//                      evidence/exec-<k>.log (`exec`).
+//                      written before the loop; its exec records, and the files.txt and base of `prepare 0`, live in
+//                      round-0/.
+//   round-N/           files.txt, patches/, base (`prepare`); review prompts, slice-<S>.txt, slice-<S>.patch (every
+//                      patch of the slice in one file), slices (`slice`); review-<S>.json (`reviewed`);
+//                      verify-attempt-<A>.json (`attempt`); exec/<k>.json and evidence/exec-<k>.log (`exec`).
 //   status, stall.json written by the verdict only; `resume` archives them under stalls/<n>/. stall.json holds either
 //                      the repeats or the hotspots behind a stall.
 //   stalls/<n>/round   written by `resume`: the latest recorded round when the loop resumed (absent = 0).
@@ -24,14 +25,15 @@
 //   tree            the working-tree hash (tracked + untracked, ignoring .gitignore'd files) that verify, exec, and
 //                   round files are keyed on.
 //   round           the next round number (recorded rounds + 1).
-//   prepare N --base <ref>   fetches origin/<ref>, then writes round N's diff handoff against the merge-base:
-//                   files.txt (numstat), one patch per file, and base (the merge-base sha). Renames are split into a
-//                   delete and an add, so every path in files.txt has its own patch.
+//   prepare N --base <ref>   fetches origin/<ref>, then writes round N's diff handoff from the merge-base to the tree
+//                   `tree` hashes (untracked files included): files.txt (numstat), one patch per file, and base (the
+//                   merge-base sha). Renames are split into a delete and an add, so every path in files.txt has its own
+//                   patch.
 //   reuse K N       copies verify-K.json, verified on the current tree, to verify-N.json with "reused_from" set to
 //                   the round that ran it. Its carried attempts, exec records, and base resolve in that round.
-//   brief N         prints the mechanical part of round N's verifier brief on stdout and, on stderr, what the skill
-//                   judges before appending its own part (the files changed since the latest green verification and
-//                   the entries it may carry).
+//   brief N         prints the mechanical part of round N's verifier brief on stdout, including the browser-scenario
+//                   line when the diff changes UI files, and, on stderr, what the skill judges before appending its
+//                   own part (the files changed since the latest green verification and the entries it may carry).
 //   exec N [--base] -- <command>   runs <command> through $SHELL from the current directory (with --base, from the
 //                   same directory of the base worktree round-N/evidence/base), tees its output to
 //                   round-N/evidence/exec-<k>.log, and records round-N/exec/<k>.json. Exits with the command's code.
@@ -64,13 +66,21 @@
 // the same name: identical code gives the same result, so a blocked scenario no longer reruns a build that passed.
 // A round whose files.txt lists a non-test, non-generated UI file (tsx, jsx, vue, svelte, css, scss, html, or a
 // .ts/.js file that a component imports, directly or not; ui.ts holds the rule) is green only with a passing scenario
-// whose `surface` is "browser": unit tests and API calls never prove a screen. Generated files (isGenerated) leave this rule and the
-// review slices: nobody writes them by hand.
+// whose `surface` is "browser": unit tests and API calls never prove a screen. Round 0 follows the same rule: its
+// files.txt comes from `prepare 0`, or, when that never ran, from the diff between the merge-base with origin's
+// default branch and the verified tree; with neither, `verify 0` is blocked (the UI rule cannot be checked) and a later
+// brief carries nothing from it. Generated files (generatedPaths) leave this rule and the review slices:
+// nobody writes them by hand.
 //
 // Review. `slice N` packs round N's diff into slices of at most SLICE_LINES changed lines (a bigger single file is its
 // own slice) and writes two prompts per slice, review-<S>.prompt (correctness) and review-sec-<S>.prompt (security),
-// printing their names one per line (`A`, `sec-A`, `B`, `sec-B`). No name printed = nothing to review. The task texts
-// live here so the prompts are the same every round. The first reviewed round covers every file; later ones re-review
+// printing their names one per line (`A`, `sec-A`, `B`, `sec-B`). No name printed = nothing to review. It also writes
+// slice-<S>.patch, every patch of the slice under an `=== PATCH: <path> ===` header, so a reviewer prints the whole
+// slice in one call; a whole `cat` of its exact absolute path whose output holds every one of those headers counts as a
+// read of every file of the slice. A non-empty
+// decisions.md (the defaults a run built on while its owner was away, and the findings deferred to the owner) goes into
+// every prompt as <recorded_decisions>. The task texts live here so
+// the prompts are the same every round. The first reviewed round covers every file; later ones re-review
 // only the files changed since the previous reviewed round plus the files of its rejected findings, so the loop
 // converges on its own fixes instead of digging up older code. Every prompt lists the findings earlier rounds rejected
 // or recorded as pre-existing, so they are not repeated. `reviewed N` passes a process when its trace
@@ -108,7 +118,7 @@ import { constants as osConstants, tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
 import { $ } from "bun";
 import { runPeer } from "./peer";
-import { openedFile, printedText, readTrace } from "./trace";
+import { openedBundle, openedFile, patchHeader, printedText, readTrace } from "./trace";
 import { isUiFile, TEST_FILE } from "./ui";
 
 export type Finding = { file: string; line: number; title: string; why: string };
@@ -139,6 +149,8 @@ const RESULTS = ["pass", "fail", "blocked"];
 const SURFACES = ["browser", "api", "cli"];
 
 const SLICE_LINES = 2000;
+// The brief line of a round whose diff changes UI files: the rule verifyResult enforces, said before the run.
+const UI_BRIEF_LINE = 'UI files changed: at least one passing scenario with surface "browser" is required.';
 // Green rounds in a row with a critical/major finding in one file before the loop stalls on that file.
 const HOTSPOT_ROUNDS = 3;
 // The verifier's shell caps one call at 10 minutes, so one wait must end before that.
@@ -147,13 +159,15 @@ const WAIT_MINUTES = 9;
 // Rules every reviewer prompt shares: finding fields, re-review scope, earlier judgments, and severity.
 const FINDING_RULES = `For each finding, \`trigger\` names the input or state that makes it fail. Set \`pre_existing\` to true when the faulty code is not added or changed by the patch: the pull request did not introduce it, so it is recorded for the owner and never blocks this PR. When a defect is one instance of a pattern, report the pattern once, at its first instance, and list every other instance you find in \`why\`, so all of them get fixed in one round.
 
+<recorded_decisions>, when present, lists the decisions this run recorded for its owner, who has not reviewed them yet: product questions it built on a recommended default, and findings it deferred to the owner. They are open, not adopted, but already on the owner's list. Do not report a behavior that follows one of them, or the deferred finding itself, unless it breaks a hard invariant (data loss, a security hole, a crash, a broken contract), citing the code that proves it.
+
 <scope> says whether this is a full review or a re-review. On a re-review, the files outside your slice were reviewed in an earlier round and have not changed since: open them only to check how your slice affects them. <already_judged> lists findings earlier rounds rejected (with the reason) or recorded as pre-existing. Do not report them again unless you can show the reason is wrong, citing the code that proves it. <generated> lists the generated files of the diff: they are outside every slice; open one only as context for your slice.
 
 Severity: critical = data loss, security, or crash on the main path; major = incorrect behavior or contract violation; minor = real but low-impact defect; nit = anything else, including a stale recipe or doc of a dev tool (a \`verify-<app>\` skill, a script's README) that the product never runs.`;
 
 // What the gate accepts as proof that a reviewer read a patch (trace.ts): a search or a loop over a shell variable is
 // not a read, and reviewers skipped large test patches that way, which no rerun changed.
-const OPEN_RULE = `Print every patch file listed in <slice> in full, test files included, and open surrounding source when needed. Use \`cat\` with each patch path, or a glob of it, written in the command itself: the gate rejects a review whose trace leaves one patch unprinted, and it does not count a search (\`rg\`, \`grep\`), a count (\`wc\`), or a loop that reads a shell variable (\`for f in …; do cat "$f"\`).`;
+const OPEN_RULE = `Print every patch of <slice> in full, test files included, and open surrounding source when needed. Its first line names the slice bundle: \`cat <bundle path>\`, with the absolute path exactly as listed and its output neither piped nor redirected, prints every patch of the slice in one call, each under an \`=== PATCH: <path> ===\` header. \`cat\` with each patch path, or a glob of them, also counts. Write the path in the command itself: the gate rejects a review whose trace leaves one patch unprinted, and it does not count a search (\`rg\`, \`grep\`), a count (\`wc\`), or a loop that reads a shell variable (\`for f in …; do cat "$f"\`).`;
 
 const REVIEW_TASK = `Review your slice of this pull request diff against its stated intent. ${OPEN_RULE} Report only defects you can point to in those patches: wrong logic, contract violations against the intent, missing error handling at trust boundaries, data loss, missing or incorrect tests for changed behavior. Security has its own reviewer. If the repository's AGENTS.md names a review checklist, apply its rules to your slice. Do not report style, naming, formatting, or hypothetical future needs. Zero findings is a valid result.
 
@@ -287,7 +301,19 @@ function describeOutcome({ result, reason, known }: Outcome): string {
 }
 
 const pathOf = (numstatLine: string): string => numstatLine.split("\t").slice(2).join("\t");
-const patchPath = (roundDir: string, path: string): string => `${roundDir}/patches/${path.replaceAll("/", "__")}.patch`;
+// One patch file per changed path. `%` and `_` are escaped before `/` becomes `__`, so no two paths share a name:
+// `a/b.txt` is a__b.txt.patch and `a__b.txt` is a%5F%5Fb.txt.patch.
+const patchPath = (roundDir: string, path: string): string =>
+  `${roundDir}/patches/${path.replaceAll("%", "%25").replaceAll("_", "%5F").replaceAll("/", "__")}.patch`;
+// The patch a round holds for `path`. A round prepared before the escaped names holds `/`→`__` names: they are read as
+// they are, so a loop started then keeps its recorded reviews.
+function roundPatch(roundDir: string, path: string): string {
+  const escaped = patchPath(roundDir, path);
+  const legacy = `${roundDir}/patches/${path.replaceAll("/", "__")}.patch`;
+  return !existsSync(escaped) && existsSync(legacy) ? legacy : escaped;
+}
+// Every patch of slice <letter> in one file, so a reviewer prints the slice in one call.
+const bundlePath = (roundDir: string, letter: string): string => `${roundDir}/slice-${letter}.patch`;
 
 // A generated file is written by a tool, not by the PR's author: reviewing it finds nothing a person can fix, and a
 // generated API client is not a screen. Generated = marked linguist-generated in .gitattributes, named like one
@@ -310,18 +336,35 @@ async function generatedPaths(root: string, paths: string[]): Promise<Set<string
   return generated;
 }
 
-// files.txt is `git diff --numstat`: added<TAB>removed<TAB>path.
-async function changesUi(filesTxt: string): Promise<boolean> {
-  const file = Bun.file(filesTxt);
-  if (!(await file.exists())) throw new Error(`${filesTxt}: missing; gate.ts prepare writes it at the start of the round`);
+// Whether a numstat (`git diff --numstat`: added<TAB>removed<TAB>path) lists a hand-written UI file.
+async function changesUi(numstat: string): Promise<boolean> {
   const root = await toplevel();
-  const paths = (await file.text()).split("\n").map(pathOf).filter((path) => path && !TEST_FILE.test(path));
+  const paths = numstat.split("\n").map(pathOf).filter((path) => path && !TEST_FILE.test(path));
   const generated = await generatedPaths(root, paths);
   for (const path of paths) {
     if (generated.has(path)) continue;
     if (await isUiFile(root, path)) return true;
   }
   return false;
+}
+
+// Round N's changed files as a numstat: its files.txt. Round 0 is the implement skill's verification, which may run
+// without `prepare 0`; its diff then runs from the merge-base with origin's default branch to `tree` (the verified
+// tree, or the current one for a brief), so verify-0.json is never blind to a UI diff. When neither exists, as for a
+// verify-0.json written before this rule, the diff is `unknown`, with the reason: the caller decides whether that
+// blocks a verification or breaks the command.
+async function roundNumstat(dir: string, round: string, tree: string): Promise<{ numstat: string } | { unknown: string }> {
+  const filesTxt = `${dir}/round-${round}/files.txt`;
+  if (existsSync(filesTxt)) return { numstat: readFileSync(filesTxt, "utf8") };
+  if (round !== "0") throw new Error(`${filesTxt}: missing; gate.ts prepare writes it at the start of the round`);
+  const root = await toplevel();
+  const fix = "run gate.ts prepare 0 --base <base> first";
+  const head = await $`git symbolic-ref --quiet --short refs/remotes/origin/HEAD`.cwd(root).nothrow().quiet();
+  if (head.exitCode !== 0) return { unknown: `${filesTxt} is missing and origin/HEAD is unset, so the diff of round 0 has no base; ${fix}` };
+  const mergeBase = (await $`git merge-base ${head.text().trim()} HEAD`.cwd(root).text()).trim();
+  const diff = await $`git diff --no-renames -z --numstat ${mergeBase} ${tree}`.cwd(root).nothrow().quiet();
+  if (diff.exitCode !== 0) return { unknown: `${filesTxt} is missing and tree ${tree} is gone, so the diff of round 0 is unknown; ${fix}` };
+  return { numstat: diff.text().split("\0").filter(Boolean).join("\n") };
 }
 
 function verifyResult({ checks, scenarios }: Verify, ui: boolean, known: string[]): Outcome {
@@ -384,21 +427,23 @@ export function describeDiff(size: DiffSize, first: DiffSize | undefined): strin
 const isDiffSize = (value: unknown): value is DiffSize =>
   isObject(value) && typeof value.added === "number" && typeof value.removed === "number";
 
-// Writes round N's diff handoff against the merge-base with origin/<base>, working tree included so the previous
-// round's fixes are always seen. --no-renames splits a rename into a delete and an add: a rename's numstat path
-// (`old => new`) names no file, so it would match no patch.
+// Writes round N's diff handoff from the merge-base with origin/<base> to the tree `tree` hashes: the working tree,
+// untracked files included, so the previous round's fixes and a new file not yet added are always seen, and the
+// round reviews and verifies exactly the files its verify-N.json is keyed on. --no-renames splits a rename into a
+// delete and an add: a rename's numstat path (`old => new`) names no file, so it would match no patch.
 async function prepare(round: string, base: string): Promise<string> {
   const root = await toplevel();
+  const current = await tree();
   const roundDir = `${await stateDir()}/round-${round}`;
   await $`git fetch --quiet origin ${base}`.cwd(root);
   const mergeBase = (await $`git merge-base ${`origin/${base}`} HEAD`.cwd(root).text()).trim();
   rmSync(`${roundDir}/patches`, { recursive: true, force: true }); // a rerun of prepare must not keep stale patches
   mkdirSync(`${roundDir}/patches`, { recursive: true });
   // -z keeps unusual paths verbatim instead of quoted.
-  const records = (await $`git diff --no-renames -z --numstat ${mergeBase}`.cwd(root).text()).split("\0").filter(Boolean);
+  const records = (await $`git diff --no-renames -z --numstat ${mergeBase} ${current}`.cwd(root).text()).split("\0").filter(Boolean);
   for (const line of records) {
     // `:(literal)` stops git from reading a `*` or `?` in a file name as a glob.
-    const patch = await $`git diff --no-renames ${mergeBase} -- ${`:(literal)${pathOf(line)}`}`.cwd(root).text();
+    const patch = await $`git diff --no-renames ${mergeBase} ${current} -- ${`:(literal)${pathOf(line)}`}`.cwd(root).text();
     await Bun.write(patchPath(roundDir, pathOf(line)), patch);
   }
   await Bun.write(`${roundDir}/files.txt`, records.length > 0 ? `${records.join("\n")}\n` : "");
@@ -487,8 +532,11 @@ async function slice(round: string): Promise<string[]> {
     ? `Re-review: only files changed since ${previous?.name.slice(0, -".json".length)} or named by its rejected findings are in the slices.`
     : "Full review: every changed file of the pull request is in the slices.";
   const judged = describeJudged(earlier);
-  const generatedList = [...generated].map((path) => `- ${path}: generated, not reviewed (${patchPath(roundDir, path)})`).join("\n");
+  const generatedList = [...generated].map((path) => `- ${path}: generated, not reviewed (${roundPatch(roundDir, path)})`).join("\n");
   const intent = (await $`gh pr view --json body --jq .body`.text()).trim();
+  const decisionsFile = `${dir}/decisions.md`;
+  const decisions = existsSync(decisionsFile) ? readFileSync(decisionsFile, "utf8").trim() : "";
+  const recorded = decisions ? `<recorded_decisions>\n${decisions}\n</recorded_decisions>\n` : "";
   const checks = [
     ...verify.checks.map((check) => `- ${check.command}: exit ${check.exit}${known.includes(check.command) ? " (fails on the base too)" : ""}`),
     ...verify.scenarios.map((scenario) => `- ${scenario.name}: ${scenario.result}`),
@@ -497,12 +545,16 @@ async function slice(round: string): Promise<string[]> {
   for (const [i, paths] of packSlices(reviewed).entries()) {
     const name = i < 26 ? String.fromCharCode(65 + i) : `S${i}`;
     const patches = [];
+    const bundle = [];
     for (const path of paths) {
-      const patch = patchPath(roundDir, path);
+      const patch = roundPatch(roundDir, path);
       if (!(await Bun.file(patch).exists())) throw new Error(`${patch}: missing; gate.ts prepare writes one patch per file`);
       patches.push(patch);
+      bundle.push(`${patchHeader(path)}\n${await Bun.file(patch).text()}`);
     }
-    const context = `<intent>\n${intent}\n</intent>\n<checks_passed>\n${checks}\n</checks_passed>\n<scope>\n${scope}\n</scope>\n<already_judged>\n${judged || "none"}\n</already_judged>\n<files>\n${files.trim()}\n</files>\n<generated>\n${generatedList || "none"}\n</generated>\n<slice>\n${patches.join("\n")}\n</slice>\n`;
+    await Bun.write(bundlePath(roundDir, name), bundle.join("\n"));
+    const sliceList = [`bundle: ${bundlePath(roundDir, name)} (every patch below, in one file)`, ...patches].join("\n");
+    const context = `<intent>\n${intent}\n</intent>\n${recorded}<checks_passed>\n${checks}\n</checks_passed>\n<scope>\n${scope}\n</scope>\n<already_judged>\n${judged || "none"}\n</already_judged>\n<files>\n${files.trim()}\n</files>\n<generated>\n${generatedList || "none"}\n</generated>\n<slice>\n${sliceList}\n</slice>\n`;
     await Bun.write(`${roundDir}/review-${name}.prompt`, `${REVIEW_TASK}\n\n${context}`);
     await Bun.write(`${roundDir}/review-sec-${name}.prompt`, `${security}\n\n${context}`);
     await Bun.write(`${roundDir}/slice-${name}.txt`, `${paths.join("\n")}\n`);
@@ -531,19 +583,25 @@ function isFinding(value: unknown): value is ReviewFinding {
 
 // Judges one reviewer process from its trace, review-<name>.jsonl, written by peer.ts in its engine's format (see
 // trace.ts). A reviewer that answers without opening its files can return zero findings that look exactly like a
-// clean review, so a review counts only when the trace shows a read of every file of its slice (the patch or the
-// source file) and ends with a well-formed result. On success it writes review-<name>.json from that result: the
+// clean review, so a review counts only when the trace shows a read of every file of its slice (a whole print of the
+// slice bundle's exact path that returned every patch header, the patch, or the source file) and ends with a well-formed result. On success it writes review-<name>.json from that result: the
 // trace is the only source of the findings.
 async function judgeReview(roundDir: string, name: string): Promise<ReviewCheck> {
   const letter = name.replace(/^sec-/, "");
   const paths = (await Bun.file(`${roundDir}/slice-${letter}.txt`).text()).split("\n").filter(Boolean);
   const traceFile = Bun.file(`${roundDir}/review-${name}.jsonl`);
   if (!(await traceFile.exists())) return { name, problem: "no trace", summary: `${name}: no trace review-${name}.jsonl` };
-  const { engine, opened, printed, output, toolCalls } = readTrace(await traceFile.text());
-  const patches = await Promise.all(paths.map((path) => Bun.file(patchPath(roundDir, path)).text()));
+  const { engine, opened, fullReads, printed, output, toolCalls } = readTrace(await traceFile.text());
+  const patchFiles = paths.map((path) => roundPatch(roundDir, path));
+  const patches = await Promise.all(patchFiles.map((file) => Bun.file(file).text()));
+  // Rounds sliced before bundles existed have none, and their traces never read one.
+  const bundled = openedBundle(fullReads, bundlePath(roundDir, letter), paths);
   const unopened = paths.filter(
     (path, index) =>
-      !openedFile(opened, patchPath(roundDir, path)) && !openedFile(opened, path) && !printedText(printed, patches[index]),
+      !bundled &&
+      !openedFile(opened, patchFiles[index]) &&
+      !openedFile(opened, path) &&
+      !printedText(printed, patches[index]),
   );
   const coverage = `${paths.length - unopened.length}/${paths.length} files opened, ${toolCalls} tool calls, ${engine}`;
   if (!isObject(output) || !Array.isArray(output.findings) || !output.findings.every(isFinding))
@@ -650,10 +708,9 @@ async function readVerify(dir: string, round: string): Promise<Outcome & { verif
   const { known, unrun } = await knownFailures(dir, verify, records, source);
   if (unrun.length > 0)
     return { result: "blocked", reason: `base run stopped before the check ran, so it proves nothing: ${unrun.join("; ")}; rerun it with its environment ready (a backend slot, the install)`, verify };
-  // verify-0.json has no round, so no files.txt. Its UI rule is not checked here: a round that reuses or carries from
-  // it is judged on its own files.txt, so a UI diff still needs a passing browser scenario there.
-  const ui = round === "0" ? false : await changesUi(`${dir}/round-${round}/files.txt`);
-  const outcome = verifyResult(verify, ui, known);
+  const diff = await roundNumstat(dir, round, verify.tree);
+  if ("unknown" in diff) return { result: "blocked", reason: `the UI rule cannot be checked: ${diff.unknown}`, verify };
+  const outcome = verifyResult(verify, await changesUi(diff.numstat), known);
   if (outcome.result !== "green") return { ...outcome, verify };
   return { ...((await uncarried(dir, source, verify)) ?? outcome), verify };
 }
@@ -741,6 +798,9 @@ async function brief(round: number): Promise<{ text: string; judge: string }> {
   ];
   if (existsSync(`${roundDir}/base`))
     text.push(`Base: ${(await Bun.file(`${roundDir}/base`).text()).trim()} (the merge-base), for the base run of a check that fails after its rerun.`);
+  const diff = await roundNumstat(dir, String(round), current);
+  if ("unknown" in diff) throw new Error(diff.unknown);
+  if (await changesUi(diff.numstat)) text.push(UI_BRIEF_LINE);
   text.push(
     journeys.length > 0
       ? `Journeys from earlier runs; rerun the one of each assigned scenario instead of writing a new one:\n${journeys.map((name) => `- ${journeysDir}/${name}`).join("\n")}`

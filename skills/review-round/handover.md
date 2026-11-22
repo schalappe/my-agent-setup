@@ -2,7 +2,7 @@
 
 The last phase of [review-round](SKILL.md): `wt`, `dir`, `gate`, and the End are as SKILL.md sets them.
 
-Runs when the loop stops after `converged`. A stalled or capped loop gets here only when the user chose to merge with known limits ([stopped loop](SKILL.md#stopped-loop)), enters at step 2 with step 4 already answered; otherwise its PR and its worktree stay as they are, as do a broken loop's.
+Runs when the loop stops after `converged`. A stalled or capped loop gets here only when the user chose to merge with known limits ([stopped loop](stopped.md#stopped-loop)), enters at step 2 with step 4 already answered; otherwise its PR and its worktree stay as they are, as do a broken loop's.
 
 1. `bun $gate ready`:
    - Exit 0 → if `gh pr view --json isDraft --jq .isDraft` prints `true`, run `gh pr ready <number>` and print `PR #<number> marked ready`. Print its `minor left:` lines: those minors go to the human.

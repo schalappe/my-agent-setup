@@ -1,0 +1,15 @@
+# Minor pass
+
+Runs once per loop, when the gate first prints `converged` and `$dir/minor-pass` does not exist (it exists → the pass already ran: [hand over](handover.md)). Owners almost always ask for the minors to be fixed in the same PR, so the loop does it before handing over. `gate`, `dir`, `wt`, `N`, and `p` are set as in [SKILL.md](SKILL.md#resolve-context-every-round).
+
+1. `bun $gate ready`. Exit 0 → no minor is owed: [hand over](handover.md). Exit 1 with `the minor pass has not run on the … minor finding(s) of round-K.json` → read `minor` from that file: the gate names the round the loop converged on, which is not always the latest. Then run [Land](handover.md#land) step 1's base listing: a file listed → merge the base, push, and go back to the [loop](SKILL.md#loop) for a round on the merged code, since the loop has not converged on it. The pass's own round merges no base, so its revert restores exactly the converged code.
+2. `touch "$dir/minor-pass"`, so a pass that changes nothing still counts as run. Dispatch one Opus subagent (medium) with the absolute path of `wt`, the PR body, those minor findings, and the patch paths of the files they touch. It fixes each one or rejects it under the [Fix](SKILL.md#3-fix) rules (including `decision:`) and does not commit; its answer is reported, not recorded.
+3. Nothing changed → report the rejections and [hand over](handover.md). Otherwise `git add -A && git commit -m "chore(review): minor fixes" && git push`, one commit, then run one more round with these changes: it skips the base listing, dispatches no fixer (a red or blocked verification included), and stops after `bun $gate reviewed $N`, before its record.
+4. That round is green with no critical or major finding → record it, `bun $gate` prints `converged`: [hand over](handover.md). Its own minors go to the human.
+5. Otherwise the pass is all or nothing: nothing is fixed forward, since a fix on top of the minor fixes reopens a loop that had converged. In this order, so an interruption never loses a finding or leaves it unanswered:
+   1. Append each critical and major finding of the round to `$dir/decisions.md` as a `decision:` (fix it in a follow-up, or accept it), so a `send` End asks before it merges: some sit on lines the minor fixes never touched, in code the loop had passed.
+   2. `git revert --no-edit <the minor fixes commit> && git push`.
+   3. Record the round, with those findings under `rejected` in `$p/fix.json` (reason: `decision: minor pass reverted`).
+   4. `bun $gate` prints `converged`, since the code is again the tree the loop converged on: [hand over](handover.md). Anything else → the tree differs from the converged one (a file a check left behind, say): print `git status --porcelain` and take the [stopped loop](stopped.md#stopped-loop).
+
+Report each minor as fixed or rejected with its reason, or, after a revert, as open again. A pass interrupted between its commit and its record resumes as an ordinary round, fixer included: slower, and never unreviewed.

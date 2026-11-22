@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
-import { openedFile, printedText, readTrace } from "./trace";
+import { openedBundle, openedFile, printedText, readTrace } from "./trace";
 
-const codexRun = (...commands: string[]) =>
+const codexRun = (...commands: string[]) => codexRunWithOutput(...commands.map((command) => [command, ""] as [string, string]));
+const codexRunWithOutput = (...commands: [string, string][]) =>
   [
-    ...commands.map((command) =>
-      JSON.stringify({ type: "item.completed", item: { type: "command_execution", command, exit_code: 0 } }),
+    ...commands.map(([command, aggregated_output]) =>
+      JSON.stringify({ type: "item.completed", item: { type: "command_execution", command, exit_code: 0, aggregated_output } }),
     ),
     JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: '{"findings": []}' } }),
     JSON.stringify({ type: "turn.completed" }),
@@ -114,4 +115,65 @@ test("a T3 command's output counts as printed text, a failed command's neither o
 test("a T3 thread whose last page is not completed is an error", () => {
   const jsonl = [JSON.stringify(t3Page([t3Answer(1)])), JSON.stringify(t3Page([], "failed"))].join("\n");
   expect(readTrace(jsonl).isError).toBe(true);
+});
+
+const bundle = "/r/round-1/slice-A.patch";
+const slicePaths = ["a.py", "b.py"];
+const bundleText = "=== PATCH: a.py ===\ndiff --git a/a.py b/a.py\n+x\n=== PATCH: b.py ===\ndiff --git a/b.py b/b.py\n+y\n";
+
+test("only a whole cat of the bundle's exact absolute path reads the slice bundle", () => {
+  const reads = (command: string) =>
+    openedBundle(readTrace(codexRunWithOutput([`/bin/zsh -lc '${command}'`, bundleText])).fullReads, bundle, slicePaths);
+  expect(reads("cat /r/round-1/slice-A.patch")).toBe(true);
+  expect(reads("cd /elsewhere && cat -n /r/round-1/slice-A.patch")).toBe(true);
+  expect(reads("head -n 1 /r/round-1/slice-A.patch")).toBe(false);
+  expect(reads("sed -n 1p /r/round-1/slice-A.patch")).toBe(false);
+  expect(reads("cat /r/round-1/slice-A.patch | head -n 1")).toBe(false);
+  expect(reads("cat /r/round-1/slice-A.patch > /tmp/copy")).toBe(false);
+  expect(reads("cd /other/round && cat ./slice-A.patch")).toBe(false);
+  expect(reads("cd /r/round-1 && cat slice-A.patch")).toBe(false);
+  expect(reads("cat /r/round-1/slice-*.patch")).toBe(false);
+  expect(reads("cat /r/round-1/slice-sec-A.patch")).toBe(false);
+  expect(reads("cat /r/round-1/slice-B.patch")).toBe(false);
+  expect(reads("cat /r/round-2/slice-A.patch")).toBe(false);
+  expect(reads("rg TODO /r/round-1/slice-A.patch")).toBe(false);
+});
+
+test("a bundle cat counts only when its output holds every patch header of the slice", () => {
+  const reads = (command: string, output: string) =>
+    openedBundle(readTrace(codexRunWithOutput([`/bin/zsh -lc '${command}'`, output])).fullReads, bundle, slicePaths);
+  expect(reads(`cat ${bundle}`, bundleText)).toBe(true);
+  expect(reads(`true || cat ${bundle}`, "")).toBe(false);
+  expect(reads(`cat ${bundle}`, bundleText.slice(0, bundleText.indexOf("=== PATCH: b.py ===")))).toBe(false);
+  const failed = [
+    JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: `cat ${bundle}`, exit_code: 1, aggregated_output: bundleText } }),
+    JSON.stringify({ type: "turn.completed" }),
+  ].join("\n");
+  expect(openedBundle(readTrace(failed).fullReads, bundle, slicePaths)).toBe(false);
+  const t3 = (status: string) =>
+    readTrace(JSON.stringify(t3Page([t3Command(1, `cat ${bundle}`, bundleText, status), t3Answer(2)]))).fullReads;
+  expect(openedBundle(t3("completed"), bundle, slicePaths)).toBe(true);
+  expect(openedBundle(t3("failed"), bundle, slicePaths)).toBe(false);
+});
+
+test("a claude Read prints the bundle whole only without offset or limit and with a full, successful result", () => {
+  const numbered = bundleText.split("\n").map((line, index) => `${String(index + 1).padStart(6)}\t${line}`).join("\n");
+  const trace = (input: Record<string, unknown>, result?: Record<string, unknown>) =>
+    readTrace(
+      [
+        JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Read", input }] } }),
+        ...(result ? [JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", ...result }] } })] : []),
+        JSON.stringify({ type: "result", result: "", structured_output: { findings: [] } }),
+      ].join("\n"),
+    );
+  const read = (input: Record<string, unknown>, result?: Record<string, unknown>) =>
+    openedBundle(trace(input, result).fullReads, bundle, slicePaths);
+  expect(read({ file_path: bundle }, { content: numbered })).toBe(true);
+  expect(read({ file_path: bundle }, { content: [{ type: "text", text: numbered }] })).toBe(true);
+  expect(read({ file_path: bundle, limit: 1 }, { content: numbered })).toBe(false);
+  expect(read({ file_path: bundle, offset: 5 }, { content: numbered })).toBe(false);
+  expect(read({ file_path: bundle }, { content: numbered, is_error: true })).toBe(false);
+  expect(read({ file_path: bundle }, { content: "File does not exist.", is_error: true })).toBe(false);
+  expect(read({ file_path: bundle }, { content: numbered.slice(0, numbered.indexOf("=== PATCH: b.py ===")) })).toBe(false);
+  expect(read({ file_path: bundle })).toBe(false);
 });

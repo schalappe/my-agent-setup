@@ -132,14 +132,20 @@ function gateRepo() {
   git("checkout", "-qb", "feature");
   const dir = `${repo}/.git/review/feature`;
 
+  // Writes verify-N.json for the current tree, its one check proven by an exec record. Round 0 runs no prepare unless
+  // asked, as the implement skill may verify without one.
+  const verified = (n: number, { red = false, prepare = n > 0, scenarios = [] as unknown[] } = {}) => {
+    const command = red ? "false" : "true";
+    if (prepare) mustGate("prepare", String(n), "--base", "main");
+    expect(gate("exec", String(n), "--", command).exit).toBe(red ? 1 : 0);
+    const verify = { head: git("rev-parse", "HEAD"), tree: mustGate("tree").trim(), checks: [{ command, exit: red ? 1 : 0 }], scenarios };
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(`${dir}/verify-${n}.json`, JSON.stringify(verify));
+  };
   // A red round runs a failing check and is recorded unreviewed, as the loop records one.
   const round = (n: number, reviews: Review[], { red = false } = {}) => {
     const roundDir = `${dir}/round-${n}`;
-    const command = red ? "false" : "true";
-    mustGate("prepare", String(n), "--base", "main");
-    expect(gate("exec", String(n), "--", command).exit).toBe(red ? 1 : 0);
-    const verify = { head: git("rev-parse", "HEAD"), tree: mustGate("tree").trim(), checks: [{ command, exit: red ? 1 : 0 }], scenarios: [] };
-    writeFileSync(`${dir}/verify-${n}.json`, JSON.stringify(verify));
+    verified(n, { red });
     if (red) {
       mustGate("record", String(n));
       return;
@@ -169,7 +175,7 @@ function gateRepo() {
     mkdirSync(dir, { recursive: true });
     writeFileSync(`${dir}/same-defect.json`, JSON.stringify(judgments));
   };
-  return { root, dir, git, gate, commit, round, keepJudgments };
+  return { root, repo, dir, git, gate, mustGate, commit, verified, round, keepJudgments };
 }
 
 test("a revert back to a converged round's tree converges again and hands over that round's minors", () => {
@@ -329,3 +335,191 @@ test("the hardening skill keeps a checklist the security reviewer can read", () 
   const checks = securityChecklist(readFileSync(new URL("../hardening/SKILL.md", import.meta.url), "utf8"));
   expect(checks.length).toBeGreaterThan(0);
 });
+
+const browserPass = { name: "The page shows the new label", result: "pass", surface: "browser" };
+const uiBlocked = 'blocked: the diff changes UI files but no passing scenario has surface "browser"\n';
+
+test("verify 0 after prepare 0 refuses green on a UI diff until a browser scenario passes, and brief 0 says so", () => {
+  const { root, repo, dir, git, gate, mustGate, verified } = gateRepo();
+  try {
+    writeFileSync(`${repo}/app.css`, "body { color: red; }\n");
+    git("add", "app.css");
+    git("commit", "-qm", "style");
+    mustGate("prepare", "0", "--base", "main");
+    expect(mustGate("brief", "0")).toContain('UI files changed: at least one passing scenario with surface "browser" is required.');
+
+    verified(0);
+    expect(gate("verify", "0")).toMatchObject({ exit: 0, out: uiBlocked });
+    verified(0, { scenarios: [{ ...browserPass, surface: "api" }] });
+    expect(gate("verify", "0").out).toBe(uiBlocked);
+    verified(0, { scenarios: [browserPass] });
+    expect(gate("verify", "0").out).toBe("green\n");
+    expect(readFileSync(`${dir}/round-0/files.txt`, "utf8")).toContain("app.css");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("verify 0 without prepare 0 reads the diff against origin's default branch, and is blocked without one", () => {
+  const { root, repo, git, gate, mustGate, commit, verified } = gateRepo();
+  try {
+    commit("backend only");
+    verified(0);
+    // No round-0/files.txt and no origin/HEAD: the gate cannot tell a UI diff, so it blocks instead of guessing.
+    const blind = gate("verify", "0");
+    expect(blind.exit).toBe(0);
+    expect(blind.out).toStartWith("blocked: the UI rule cannot be checked:");
+    expect(blind.out).toContain("run gate.ts prepare 0 --base <base> first");
+
+    git("remote", "set-head", "origin", "main");
+    expect(gate("verify", "0").out).toBe("green\n");
+    expect(mustGate("brief", "0")).not.toContain("UI files changed");
+
+    writeFileSync(`${repo}/page.html`, "<p>new</p>\n");
+    verified(0);
+    expect(gate("verify", "0").out).toBe(uiBlocked);
+    expect(mustGate("brief", "0")).toContain("UI files changed");
+    verified(0, { scenarios: [browserPass] });
+    expect(gate("verify", "0").out).toBe("green\n");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("slice puts a non-empty decisions.md into every prompt as recorded decisions, right after the intent", () => {
+  const { root, dir, mustGate, commit, verified } = gateRepo();
+  try {
+    commit("feature");
+    verified(1);
+    writeFileSync(`${dir}/decisions.md`, "- Rounding: recommended half-up; built on half-up.\n");
+    const names = mustGate("slice", "1").split("\n").filter(Boolean);
+    expect(names).toEqual(["A", "sec-A"]);
+    for (const name of names) {
+      const prompt = readFileSync(`${dir}/round-1/review-${name}.prompt`, "utf8");
+      expect(prompt).toContain("</intent>\n<recorded_decisions>\n- Rounding: recommended half-up; built on half-up.\n</recorded_decisions>\n<checks_passed>");
+      expect(prompt).toContain("They are open, not adopted, but already on the owner's list.");
+      expect(prompt).toContain("Do not report a behavior that follows one of them, or the deferred finding itself, unless it breaks a hard invariant");
+      expect(prompt).not.toContain("accepted_defaults");
+    }
+
+    writeFileSync(`${dir}/decisions.md`, "\n");
+    mustGate("slice", "1");
+    expect(readFileSync(`${dir}/round-1/review-A.prompt`, "utf8")).not.toContain("<recorded_decisions>\n");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
+// A codex trace that runs each command (exit 0) and answers with no finding. A command is a string, whose output is cut
+// as a long output is, or a [command, output] pair.
+const codexReview = (...commands: (string | [string, string])[]) =>
+  [
+    ...commands.map((entry) => {
+      const [command, output] = typeof entry === "string" ? [entry, "…"] : entry;
+      return JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: `/bin/zsh -lc '${command}'`, exit_code: 0, aggregated_output: output } });
+    }),
+    JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: '{"findings": []}' } }),
+    JSON.stringify({ type: "turn.completed" }),
+  ].join("\n");
+
+test("one whole cat of slice-A.patch's exact path reads every file of the slice; a partial or relative read does not", () => {
+  const { root, repo, dir, git, gate, mustGate, verified } = gateRepo();
+  try {
+    writeFileSync(`${repo}/a.py`, "x = 1\n");
+    writeFileSync(`${repo}/b.py`, "y = 1\n");
+    git("add", "a.py", "b.py");
+    git("commit", "-qm", "feature");
+    verified(1);
+    expect(mustGate("slice", "1").split("\n").filter(Boolean)).toEqual(["A", "sec-A"]);
+    const roundDir = `${dir}/round-1`;
+    const bundle = readFileSync(`${roundDir}/slice-A.patch`, "utf8");
+    expect(bundle).toStartWith("=== PATCH: a.py ===\ndiff --git a/a.py b/a.py");
+    expect(bundle).toContain("=== PATCH: b.py ===\ndiff --git a/b.py b/b.py");
+    expect(readFileSync(`${roundDir}/review-A.prompt`, "utf8")).toContain(`<slice>\nbundle: ${roundDir}/slice-A.patch`);
+
+    const catBundle: [string, string] = [`cat ${roundDir}/slice-A.patch`, bundle];
+    writeFileSync(`${roundDir}/review-A.jsonl`, codexReview(catBundle));
+    writeFileSync(`${roundDir}/review-sec-A.jsonl`, codexReview(`cat ${roundDir}/patches/a.py.patch`));
+    const partial = gate("reviewed", "1");
+    expect(partial.exit).toBe(1);
+    expect(partial.out).toContain("A: 0 finding(s), 2/2 files opened");
+    expect(partial.out).toContain("sec-A: not reviewed, 1/2 files opened");
+    expect(partial.out).toContain("never opened: b.py");
+    expect(partial.out).toContain("rerun: sec-A");
+
+    const truncated = bundle.slice(0, bundle.indexOf("=== PATCH: b.py ==="));
+    for (const command of [
+      [`head -n 1 ${roundDir}/slice-A.patch`, "=== PATCH: a.py ==="],
+      [`cd /other/round && cat ./slice-A.patch`, "…"],
+      [`cd ${roundDir} && cat slice-A.patch`, "…"],
+      [`cat ${roundDir}/slice-sec-A.patch`, "…"],
+      [`true || cat ${roundDir}/slice-A.patch`, ""],
+      [`cat ${roundDir}/slice-A.patch`, truncated],
+    ] as [string, string][]) {
+      writeFileSync(`${roundDir}/review-sec-A.jsonl`, codexReview(command));
+      expect(gate("reviewed", "1")).toMatchObject({ exit: 1 });
+    }
+    writeFileSync(`${roundDir}/review-sec-A.jsonl`, codexReview(catBundle));
+    expect(gate("reviewed", "1")).toMatchObject({ exit: 0 });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("an untracked UI file is in prepare 0, brief 0, and verify 0, as in the tree they are keyed on", () => {
+  const { root, repo, dir, gate, mustGate, commit, verified } = gateRepo();
+  try {
+    commit("backend only");
+    writeFileSync(`${repo}/new-page.css`, "main { display: grid; }\n");
+    expect(mustGate("prepare", "0", "--base", "main")).toContain("2 file(s)");
+    expect(readFileSync(`${dir}/round-0/files.txt`, "utf8")).toContain("\tnew-page.css\n");
+    expect(readFileSync(`${dir}/round-0/patches/new-page.css.patch`, "utf8")).toContain("+main { display: grid; }");
+    expect(mustGate("brief", "0")).toContain('UI files changed: at least one passing scenario with surface "browser" is required.');
+
+    verified(0);
+    expect(gate("verify", "0").out).toBe(uiBlocked);
+    verified(0, { scenarios: [browserPass] });
+    expect(gate("verify", "0").out).toBe("green\n");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("brief 1 skips a legacy verify-0.json that has neither round-0/files.txt nor origin/HEAD", () => {
+  const { root, dir, gate, mustGate, commit, verified } = gateRepo();
+  try {
+    commit("feature");
+    verified(0);
+    expect(gate("verify", "0").out).toStartWith("blocked: the UI rule cannot be checked:");
+    mustGate("prepare", "1", "--base", "main");
+    const brief = gate("brief", "1");
+    expect(brief.exit).toBe(0);
+    expect(brief.out).toContain("Carried entries: none; this is the first verification, so run everything.");
+    expect(brief.err).toContain("no earlier green verification");
+    expect(readFileSync(`${dir}/verify-0.json`, "utf8")).toContain('"command":"true"');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("a/b.txt and a__b.txt keep distinct patches, and slice-A.patch holds both diffs", () => {
+  const { root, repo, dir, git, mustGate, verified } = gateRepo();
+  try {
+    mkdirSync(`${repo}/a`);
+    writeFileSync(`${repo}/a/b.txt`, "nested file\n");
+    writeFileSync(`${repo}/a__b.txt`, "flat file\n");
+    git("add", "a/b.txt", "a__b.txt");
+    git("commit", "-qm", "two paths");
+    verified(1);
+    expect(mustGate("slice", "1").split("\n").filter(Boolean)).toEqual(["A", "sec-A"]);
+    const bundle = readFileSync(`${dir}/round-1/slice-A.patch`, "utf8");
+    expect(bundle).toContain("=== PATCH: a/b.txt ===\ndiff --git a/a/b.txt b/a/b.txt");
+    expect(bundle).toContain("+nested file");
+    expect(bundle).toContain("=== PATCH: a__b.txt ===\ndiff --git a/a__b.txt b/a__b.txt");
+    expect(bundle).toContain("+flat file");
+    expect(readFileSync(`${dir}/round-1/patches/a__b.txt.patch`, "utf8")).toContain("+nested file");
+    expect(readFileSync(`${dir}/round-1/patches/a%5F%5Fb.txt.patch`, "utf8")).toContain("+flat file");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 60_000);

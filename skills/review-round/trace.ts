@@ -10,13 +10,22 @@
 // A file counts as opened only through a whole-file read: claude's Read, or a codex shell command whose program
 // prints files (cat, sed, nl, head, tail, …), its glob arguments matched as the shell would, or whose output holds a
 // file's whole text (`printed`, checked by the gate against each patch). Codex has no read tool, so its evidence is the
-// weaker.
+// weaker. A read of a slice bundle (slice-<S>.patch, every patch of the slice in one file) opens every file of the
+// slice, so it needs the strictest proof (openedBundle): a full print of its exact absolute path (`fullReads`) whose
+// output holds every patch header of the slice.
 
 export type Engine = "claude" | "codex";
+
+// One whole-file print: the path as written and what the read returned (the command output, or the Read result).
+export type FullRead = { path: string; output: string };
 
 export type Trace = {
   engine: Engine;
   opened: string[];
+  // Files printed whole, as written: claude's Read without offset or limit whose result is not an error, or a `cat`
+  // that is neither piped nor redirected in a command that succeeded. A `head`, a `sed -n 1p`, or `cat x | head` reads
+  // a part only. Each keeps its output, since a command can name a file it never printed (`true || cat x`).
+  fullReads: FullRead[];
   // The output of each command that exited 0 (codex and t3 only): a file whose whole text appears in one was printed, however
   // the command named it (a glob, a loop, a pipe), which is stronger evidence than the command's words.
   printed: string[];
@@ -97,13 +106,16 @@ function readT3(pages: T3Page[]): Trace {
   const commands = items.filter((item) => item.type === "command_execution" && isString(item.text));
   const succeeded = commands.filter((item) => item.status === "completed");
   const opened: string[] = [];
+  const fullReads: FullRead[] = [];
   const printed: string[] = [];
   for (const item of succeeded) {
     const text = item.text as string;
     const newline = text.indexOf("\n");
     const firstLine = newline === -1 ? text : text.slice(0, newline);
     const output = newline === -1 ? "" : text.slice(newline + 1);
-    opened.push(...codexReads(firstLine.startsWith("$ ") ? firstLine.slice(2) : firstLine));
+    const command = firstLine.startsWith("$ ") ? firstLine.slice(2) : firstLine;
+    opened.push(...codexReads(command));
+    fullReads.push(...codexFullReads(command).map((path) => ({ path, output })));
     if (output) printed.push(output);
   }
   const answer = items.findLast(
@@ -114,6 +126,7 @@ function readT3(pages: T3Page[]): Trace {
   return {
     engine: lastThread.providerInstanceId === "claudeAgent" ? "claude" : "codex",
     opened,
+    fullReads,
     printed,
     text,
     output: parseJsonAnswer(text),
@@ -128,20 +141,47 @@ function readClaude(events: Event[]): Trace {
       ? event.message.content.filter((block) => isObject(block) && block.type === "tool_use")
       : [],
   );
-  const opened = toolUses.flatMap((block) =>
-    block.name === "Read" && isObject(block.input) && isString(block.input.file_path) ? [block.input.file_path] : [],
-  );
+  const reads = toolUses.filter(
+    (block) => block.name === "Read" && isObject(block.input) && isString(block.input.file_path),
+  ) as { id?: unknown; input: Record<string, unknown> }[];
+  const opened = reads.map((block) => block.input.file_path as string);
+  const results = toolResults(events);
+  const fullReads = reads.flatMap((block) => {
+    const result = results.get(block.id);
+    if (!result || result.isError || block.input.offset !== undefined || block.input.limit !== undefined) return [];
+    return [{ path: block.input.file_path as string, output: result.text }];
+  });
   const result = events.findLast((event) => event.type === "result");
   const text = isString(result?.result) ? result.result : "";
   return {
     engine: "claude",
     opened,
+    fullReads,
     printed: [],
     text,
     output: result?.structured_output ?? parseJsonAnswer(text),
     toolCalls: toolUses.length,
     isError: !result || result.is_error === true,
   };
+}
+
+// Each claude tool result by the id of its tool_use, with its text content joined.
+function toolResults(events: Event[]): Map<unknown, { isError: boolean; text: string }> {
+  const blocks = events.flatMap((event) =>
+    isObject(event.message) && Array.isArray(event.message.content)
+      ? event.message.content.filter((block) => isObject(block) && block.type === "tool_result")
+      : [],
+  );
+  return new Map(
+    blocks.map((block) => {
+      const content = Array.isArray(block.content)
+        ? block.content.map((part: unknown) => (isObject(part) && isString(part.text) ? part.text : "")).join("\n")
+        : isString(block.content)
+          ? block.content
+          : "";
+      return [block.tool_use_id, { isError: block.is_error === true, text: content }];
+    }),
+  );
 }
 
 const READERS = new Set(["cat", "sed", "nl", "head", "tail", "bat", "awk", "less", "more"]);
@@ -152,15 +192,30 @@ function words(command: string): string[] {
   return [...command.matchAll(/'([^']*)'|"((?:[^"\\]|\\.)*)"|(\S+)/g)].map((match) => match[1] ?? match[2] ?? match[3]);
 }
 
-// Codex wraps each command as `/bin/zsh -lc '<script>'`. The script's segments that run a file printer name the files
-// they print as their non-option words.
-function codexReads(command: string): string[] {
+// Codex wraps each command as `/bin/zsh -lc '<script>'`; this returns the script inside.
+function scriptOf(command: string): string {
   const outer = words(command);
-  const script = outer.length === 3 && outer[1] === "-lc" ? outer[2] : command;
-  return script.split(/&&|\|\||[;|\n]/).flatMap((segment) => {
+  return outer.length === 3 && outer[1] === "-lc" ? outer[2] : command;
+}
+
+// The script's segments that run a file printer name the files they print as their non-option words.
+function codexReads(command: string): string[] {
+  return scriptOf(command).split(/&&|\|\||[;|\n]/).flatMap((segment) => {
     const [program, ...args] = words(segment.trim());
     if (!program || !READERS.has(program.split("/").at(-1) ?? "")) return [];
     return args.filter((arg) => !arg.startsWith("-") && /[/.]/.test(arg) && !/^\d+(,\d+)?p$/.test(arg));
+  });
+}
+
+// The files a script prints whole: the non-option words of a `cat` whose output reaches the trace untouched, so a
+// pipeline (`cat x | head`) or a redirection (`cat x > y`) prints nothing whole. Paths stay as written: a relative one
+// depends on a `cd` the gate cannot follow.
+function codexFullReads(command: string): string[] {
+  return scriptOf(command).split(/&&|\|\||[;\n]/).flatMap((pipeline) => {
+    if (/[|<>]/.test(pipeline)) return [];
+    const [program, ...args] = words(pipeline.trim());
+    if (program?.split("/").at(-1) !== "cat") return [];
+    return args.filter((arg) => !arg.startsWith("-"));
   });
 }
 
@@ -169,6 +224,11 @@ function readCodex(events: Event[]): Trace {
   const commands = items.filter((item) => item.type === "command_execution");
   const succeeded = commands.filter((item) => item.exit_code === 0);
   const opened = succeeded.flatMap((item) => (isString(item.command) ? codexReads(item.command) : []));
+  const fullReads = succeeded.flatMap((item) =>
+    isString(item.command)
+      ? codexFullReads(item.command).map((path) => ({ path, output: isString(item.aggregated_output) ? item.aggregated_output : "" }))
+      : [],
+  );
   const printed = succeeded.flatMap((item) => (isString(item.aggregated_output) ? [item.aggregated_output] : []));
   const answer = items.findLast((item) => item.type === "agent_message");
   const text = isString(answer?.text) ? answer.text : "";
@@ -176,6 +236,7 @@ function readCodex(events: Event[]): Trace {
   return {
     engine: "codex",
     opened,
+    fullReads,
     printed,
     text,
     output: parseJsonAnswer(text),
@@ -195,3 +256,14 @@ export const openedFile = (opened: string[], path: string): boolean =>
   opened.some((file) =>
     /[*?[]/.test(file) ? new Bun.Glob(file).match(path) : file === path || file.endsWith(`/${path}`),
   );
+
+// The line that opens each patch in a slice bundle; gate.ts writes it, openedBundle looks for it.
+export const patchHeader = (path: string): string => `=== PATCH: ${path} ===`;
+
+// Whether the trace printed the slice bundle `bundle` (an absolute path) whole, naming that exact path, and the read
+// returned the header of every patch of the slice (`paths`). The bundle holds every patch of its slice, so this one
+// read opens them all, and nothing weaker counts: a partial print (`head`, `sed -n 1p`), a glob, a relative path, whose
+// directory hangs on a `cd` the trace cannot prove, or a read whose output lacks a header (`true || cat x` prints
+// nothing, a cut output loses the later patches, a missing file prints none).
+export const openedBundle = (fullReads: FullRead[], bundle: string, paths: string[]): boolean =>
+  fullReads.some((read) => read.path === bundle && paths.every((path) => read.output.includes(patchHeader(path))));
