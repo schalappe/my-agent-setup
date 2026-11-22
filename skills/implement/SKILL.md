@@ -1,6 +1,6 @@
 ---
 name: implement
-description: "Implement one ticket, or a spec and its tickets, through implementer subagents while the main agent keeps scope, decisions, and acceptance."
+description: "Use when the user wants one ticket, or a spec and its tickets, implemented end to end through subagents."
 disable-model-invocation: true
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: logging-best-practices
-description: Wide events (canonical log lines) for application logging. Use when adding or reviewing log statements, or designing a service's logging or observability setup.
+description: "Use when adding or reviewing log statements, designing a service's logging or observability setup, or when wide events or canonical log lines come up."
 license: MIT
 metadata:
   author: boristane

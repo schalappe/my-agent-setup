@@ -1,6 +1,6 @@
 ---
 name: mcp-client
-description: Use MCP servers configured in a project's .mcp.json (stdio JSON-RPC) via a CLI. Use whenever the user says "use the WhatsApp MCP", "utilise le MCP X", mentions an MCP server by name, or asks to call MCP tools, when no native MCP tools for that server are available in the session.
+description: "Use when the user names an MCP server from the project's .mcp.json (\"use the WhatsApp MCP\", \"utilise le MCP X\") or asks to call MCP tools, and the session has no native tools for that server."
 compatibility: Requires bun. Only stdio MCP servers are supported.
 ---
 

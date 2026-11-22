@@ -1,6 +1,6 @@
 ---
 name: verify-app
-description: Generate or refresh a repo's project-local `verify-<app>` skill that launches the real app, drives its features, and captures evidence.
+description: "Use when a repo needs its project-local verify-<app> skill created or refreshed, so agents can launch the real app, drive its features, and capture evidence."
 disable-model-invocation: true
 ---
 

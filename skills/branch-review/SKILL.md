@@ -1,6 +1,6 @@
 ---
 name: branch-review
-description: "Three-axis review (standards, spec, correctness) of the changes since a fixed point, by parallel reviewers. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to \"review since X\"."
+description: "Use when the user wants a review of a branch, a PR, work-in-progress changes, or everything since a fixed point (\"review since X\")."
 ---
 
 Three-axis review of the diff between `HEAD` and a fixed point the user supplies:

@@ -1,9 +1,6 @@
 ---
 name: caveman-commit
-description: >
-  Caveman Conventional Commit writer. Use when the user asks to commit, requests a commit
-  message, invokes /commit or /caveman-commit, stages changes, or another workflow needs
-  a commit message.
+description: "Use when the user asks to commit or for a commit message, invokes /commit, stages changes, or another workflow needs a commit message."
 ---
 
 # Caveman Commit

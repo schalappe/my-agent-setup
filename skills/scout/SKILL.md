@@ -1,6 +1,6 @@
 ---
 name: scout
-description: Find what a ticket needs before anyone implements it, settle open decisions with the user, then rewrite or retire the ticket.
+description: "Use before implementing a ticket, to find what it really needs, settle its open decisions with the user, and rewrite it as ready for an unattended agent or retire it."
 disable-model-invocation: true
 ---
 

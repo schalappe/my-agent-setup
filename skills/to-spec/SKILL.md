@@ -1,6 +1,6 @@
 ---
 name: to-spec
-description: "Turn the current conversation into a spec and publish it to the project issue tracker: no interview, just synthesis of what you've already discussed."
+description: "Use when the conversation has settled what to build and the user wants it written up as a spec on the issue tracker, without a further interview."
 disable-model-invocation: true
 ---
 

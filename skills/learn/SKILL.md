@@ -1,6 +1,6 @@
 ---
 name: learn
-description: Coach the user through a topic by practice first, spaced reviews, and debate, across sessions in this folder.
+description: "Use when the user wants to learn a topic over several sessions through practice, spaced reviews, and debate, or to run the next session in a learning folder."
 disable-model-invocation: true
 argument-hint: "[philosopher <thesis>], or nothing to frame or run a session"
 ---

@@ -1,6 +1,6 @@
 ---
 name: triage
-description: "Take a ticket from report to closed loop: check it against the code and the running app, give a verdict with evidence, scout every real ticket before any fix, and comment on every tracker involved."
+description: "Use when the user names a ticket to check against the code and the running app for a verdict, or asks which tickets need attention."
 disable-model-invocation: true
 ---
 

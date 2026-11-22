@@ -1,6 +1,6 @@
 ---
 name: writing-adrs
-description: ADR writing for architecture decision records. Use when the user wants to create, update, supersede, reject, or review an ADR; mentions architecture decision record; or another skill needs to record an architectural decision.
+description: "Use when the user wants to create, update, supersede, reject, or review an architecture decision record (ADR), or another skill needs to record an architectural decision."
 ---
 
 # Writing ADRs

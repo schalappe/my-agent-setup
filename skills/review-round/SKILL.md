@@ -1,6 +1,6 @@
 ---
 name: review-round
-description: Run verify → review → fix rounds on a pull request, in its own worktree, until the review gate stops it or the round cap is hit. Use when the user asks to review-loop, auto-review, or run review rounds on a PR.
+description: "Use when the user asks to review-loop, auto-review, or run verify-review-fix rounds on a pull request until it is ready to merge."
 argument-hint: "[#PR] [max rounds, default 5] [send|stop]"
 ---
 

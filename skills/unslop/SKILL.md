@@ -1,6 +1,6 @@
 ---
 name: unslop
-description: "Cut AI tells from any writing. Use when writing or editing prose a human will read: docs, READMEs, AGENTS.md, PR bodies, issues, tracker comments, reports."
+description: "Use when writing or editing prose a human will read: docs, READMEs, AGENTS.md, PR bodies, issues, tracker comments, reports."
 ---
 
 # Unslop

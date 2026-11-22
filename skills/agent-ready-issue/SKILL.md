@@ -1,6 +1,6 @@
 ---
 name: agent-ready-issue
-description: Write agent-ready GitHub issues or briefs for implementation; use when creating, triaging, splitting, or refining issues for an AFK coding agent, or when another skill needs issue-body rules.
+description: "Use when creating, triaging, splitting, or refining a GitHub issue or brief that an unattended coding agent will implement, or when another skill needs the issue-body rules."
 ---
 
 # Agent-Ready Issue

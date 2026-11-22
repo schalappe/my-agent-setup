@@ -1,6 +1,6 @@
 ---
 name: caveman-comments
-description: compress code comments while enforcing Python and TypeScript documentation conventions. Use when writing or editing comments or docstrings (including JSDoc and Rustdoc) in Python, TypeScript/TSX, or Rust code.
+description: "Use when writing or editing code comments or docstrings (including JSDoc and Rustdoc) in Python, TypeScript/TSX, or Rust."
 ---
 
 Caveman comments: substance stay, fluff die. Why > what.

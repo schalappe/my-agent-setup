@@ -1,6 +1,6 @@
 ---
 name: hardening
-description: Build-time hardening for code that handles untrusted input, auth, secrets, money-moving writes, destructive file operations, dependencies, or LLM output. Use when writing or changing such code; to review a finished diff, use the review skills.
+description: "Use when writing or changing code that handles untrusted input, auth, secrets, money-moving writes, destructive file operations, dependencies, or LLM output. To review a finished diff, use the review skills instead."
 ---
 
 # Hardening

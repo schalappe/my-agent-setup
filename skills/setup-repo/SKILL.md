@@ -1,6 +1,6 @@
 ---
 name: setup-repo
-description: "Configure a repo for the engineering skills: issue trackers, triage labels, and domain doc layout. Run before first use, or again to update an already configured repo."
+description: "Use before the engineering skills (triage, scout, to-spec, to-tickets, wayfinder, implement) first run in a repo, or to update its issue trackers, triage labels, or domain doc layout."
 disable-model-invocation: true
 ---
 

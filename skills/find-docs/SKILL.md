@@ -1,6 +1,6 @@
 ---
 name: find-docs
-description: Current docs for any library, framework, SDK, CLI, or cloud service via Context7. Use for API, configuration, setup, version-migration, or library-specific debugging questions, even for well-known libraries and even when you think you know the answer. Prefer over web search for library docs.
+description: "Use for any API, configuration, setup, version-migration, or library-specific debugging question about a library, framework, SDK, CLI, or cloud service, even a well-known one and even when you think you know the answer. Prefer over web search for library docs."
 ---
 
 # Documentation Lookup

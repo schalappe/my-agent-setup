@@ -1,6 +1,6 @@
 ---
 name: agents-md
-description: Create a repository's AGENTS.md when it is missing, or audit and rewrite an existing one until it conforms. Use when the user asks to write, fix, update, audit, or trim AGENTS.md, when a repo has no AGENTS.md, or when a repeated agent mistake should become a rule.
+description: "Use when the user asks to write, fix, update, audit, or trim a repo's AGENTS.md, when a repo has none, or when a repeated agent mistake should become a rule."
 ---
 
 # AGENTS.md

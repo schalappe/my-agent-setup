@@ -1,6 +1,6 @@
 ---
 name: retro
-description: "Conduct a retrospective on a coding session."
+description: "Use when the user asks for a retrospective on a coding session, to find what in the agent's environment (navigation, checks, standards, steering files, tooling) should change."
 disable-model-invocation: true
 ---
 

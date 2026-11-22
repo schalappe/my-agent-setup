@@ -1,6 +1,6 @@
 ---
 name: bootstrap
-description: "Start a project, or bring an existing one up to standard: toolchain (uv, bun, cargo), quality checks, secret scanning, dependency updates, CI, and GitHub security settings."
+description: "Use when starting a new project, or bringing an existing repo up to standard on toolchain (uv, bun, cargo), quality checks, secret scanning, dependency updates, CI, and GitHub security settings."
 disable-model-invocation: true
 ---
 
