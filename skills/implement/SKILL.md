@@ -52,7 +52,7 @@ It runs in Claude Code, in Codex, or under T3 Code (Claude, Codex, or Gemini): [
 
 6. On the spec shape, merge each finished ticket with a merger subagent. When that changes the frontier, dispatch implementers for the new tickets.
 
-7. Run the `branch-review` skill on the branch. A finding that is doubtful, partial, or a product decision goes to the user now, through the ask tool, before final verification; with an End, it is a [decision that waits](#decisions-with-an-end). Fix the rest in one implementer subagent, then review the fix commits alone with `branch-review` (fixed point: the commit before the fixes) before merging them: a fix can trade one finding for a regression. Its reviewers are GPT-6.2 Sol peers ([harness.md](../review-round/harness.md#model-roles)); an in-session reviewer would be the writer reviewing itself.
+7. Run the `branch-review` skill on the branch. A finding that is doubtful, partial, or a product decision goes to the user now, through the ask tool, before final verification; with an End, it is a [decision that waits](#decisions-with-an-end). Fix the rest in one implementer subagent. With an End, go on from there: `review-round`'s first round reviews every file, fixes included, behind its gate. Without an End, review the fix commits alone with `branch-review` once (fixed point: the commit before the fixes), since a fix can trade one finding for a regression, and fix what it finds; any further review is the user's `/review-round`. One run re-reviewed 13 fix batches here for 6 h 30 before its first gated round. Its reviewers are GPT-6.2 Sol peers ([harness.md](../review-round/harness.md#model-roles)); an in-session reviewer would be the writer reviewing itself.
 
 8. Harmonise (see above) against the tickets, the spec, the conversation's decisions, and the review. Fix the small adjacent findings that subagents only reported instead of handing them on.
 
@@ -69,7 +69,7 @@ It runs in Claude Code, in Codex, or under T3 Code (Claude, Codex, or Gemini): [
 
 11. Remove the per-ticket subagent worktrees. Keep the worktree of the feature or integration branch: `review-round` runs in it, and offers to remove it once the PR is ready.
 
-12. An End was given → run the `review-round` skill with `#<PR> <End>` in this turn. The acceptance table then goes in the message that ends the loop, with each row's revision and status read from the loop's last `verify-N.json`.
+12. An End was given → run the `review-round` skill with `#<PR> <End>` in this turn. The acceptance table then goes in the message that ends the loop, with each row's revision and status read from the `verify-N.json` whose `tree` is the delivered code's (not always the last one: a reverted minor pass or a closing verification moves it).
 
 Hand off with an acceptance table in the run's last message: a markdown table, one row per acceptance criterion of the ticket, with the columns `criterion | revision | command | result counts | status`. Copy the status verbatim from the verifier: `pass`, `blocked`, `bypassed prerequisite`, or `not verified`. The hand-off is done when every criterion has its row; a paragraph that sums up the verification is not the table.
 

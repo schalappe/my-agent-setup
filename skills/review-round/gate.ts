@@ -11,7 +11,9 @@
 //   round-N/           files.txt, patches/, base (`prepare`); review prompts, slice-<S>.txt, slices (`slice`);
 //                      review-<S>.json (`reviewed`); verify-attempt-<A>.json (`attempt`); exec/<k>.json and
 //                      evidence/exec-<k>.log (`exec`).
-//   status, stall.json written by the verdict only; `resume` archives them under stalls/<n>/.
+//   status, stall.json written by the verdict only; `resume` archives them under stalls/<n>/. stall.json holds either
+//                      the repeats or the hotspots behind a stall.
+//   stalls/<n>/round   written by `resume`: the latest recorded round when the loop resumed (absent = 0).
 //   same-defect.json   the same-defect judgments, {<pair hash>: {same, reason}}, written by the verdict only and
 //                      never judged again.
 //
@@ -46,7 +48,8 @@
 //                   counts the hand-written lines of files.txt, with the change since the loop's first round: review
 //                   fixes tend to grow a PR, and the number shows it.
 //   ready           whether the PR may leave draft (below).
-//   resume          archives a stalled loop's status and stall.json, so the next round runs.
+//   resume          archives a stalled loop's status and stall.json, so the next round runs, and records the latest
+//                   round in stalls/<n>/round: the rounds up to it never count toward a hotspot again.
 //
 // Verification. A check counts only through its exec record: the verifier's own exit code is a self-report, and one
 // once read 0 while its log showed 314 failed tests. Every check of verify-N.json that is not carried needs a finished
@@ -75,9 +78,12 @@
 // prints one line per process and `rerun: <names>` for the failures (exit 1). The verdict and `record` refuse a round
 // whose reviews do not pass this check.
 //
-// converged: the latest round is the latest green one, found no critical/major finding, and its tree is the current
-//   tree. A round whose fixes changed the code leaves its tree behind the current one, so the fixes are always
-//   verified and reviewed by one more round before the loop converges.
+// converged: the latest recorded round on the current tree (the converged round) is green with no critical/major
+//   finding, whatever rounds were recorded after it on other trees: that exact code was verified and reviewed clean (a
+//   follow-up commit that a later round found a major in, then reverted, gives that tree back). A later round on the
+//   same tree, red, blocked, or with a major, is a newer judgment of that code and wins. A round whose fixes
+//   changed the code leaves its tree behind the current one, so the fixes are always verified and reviewed by one more
+//   round before the loop converges.
 // stalled: a critical/major finding of the latest green round repeats one from an earlier green round (the fix
 //   failed, or the fixer rejected it and the reviewer reported it again). Only two kinds of pair can repeat: the same
 //   file (a failed fix), or an earlier finding the fixer rejected (a disagreement). The same pattern found in another
@@ -86,9 +92,14 @@
 //   misses repeats. Each pair is judged once and kept in same-defect.json (its run's trace in same-defect.jsonl), so
 //   the verdict is a deterministic function of the round files and those kept judgments. The repeats behind a stall
 //   are written to stall.json and printed with the judge's reason.
-// ready: exit 0 when the loop converged on the current tree and either the minor pass ran or the latest round left
-//   no minor finding to pass on; it prints each remaining minor (`minor left: <file>: <title>`) for the hand-over.
-//   Exit 1 prints why the PR stays draft.
+//   With no repeat, the loop is also stalled on a hotspot: one file holds a critical/major finding in each of the last
+//   HOTSPOT_ROUNDS green rounds, counting only rounds after the latest stalls/<n>/round, so a resumed loop is not
+//   stalled again by the same rounds. Hotspots are written to stall.json and printed as
+//   `hotspot: <file>: critical or major findings in rounds 5, 6, 7`.
+// ready: exit 0 when the loop converged on the current tree and either the minor pass ran or the converged round left
+//   no minor finding to pass on; it prints each remaining minor of the converged round (`minor left: <file>: <title>`)
+//   for the hand-over. A converged status cached by an older gate, whose rounds no longer prove a converged round,
+//   reads its minors from the latest round file, as that gate did. Exit 1 prints why the PR stays draft.
 // A status written for another tree is stale (the code changed since): it is dropped and the loop goes on.
 // Red and blocked rounds never count as passes; they always continue.
 
@@ -100,10 +111,13 @@ import { runPeer } from "./peer";
 import { openedFile, printedText, readTrace } from "./trace";
 import { isUiFile, TEST_FILE } from "./ui";
 
-type Finding = { file: string; line: number; title: string; why: string };
+export type Finding = { file: string; line: number; title: string; why: string };
 type Round = { head: string; tree: string; majors: Finding[]; rejected?: unknown[] };
 type Earlier = { finding: Finding; round: string; rejected: boolean };
 type Repeat = { latest: Finding; earlier: Finding; round: string; reason: string };
+export type Hotspot = { hotspot: string; rounds: string[]; titles: string[] };
+// stall.json holds the repeats or the hotspots behind a stall.
+type StallEntry = Repeat | Hotspot;
 type Judgment = { same: boolean; reason: string };
 type Carry = { carried_from?: number; carried_from_attempt?: number };
 type Check = Carry & { command: string; exit: number; seconds?: number };
@@ -125,6 +139,8 @@ const RESULTS = ["pass", "fail", "blocked"];
 const SURFACES = ["browser", "api", "cli"];
 
 const SLICE_LINES = 2000;
+// Green rounds in a row with a critical/major finding in one file before the loop stalls on that file.
+const HOTSPOT_ROUNDS = 3;
 // The verifier's shell caps one call at 10 minutes, so one wait must end before that.
 const WAIT_MINUTES = 9;
 
@@ -948,14 +964,54 @@ async function record(round: string, fixPath: string | undefined): Promise<strin
   return `Round ${round}: verify=${describeOutcome(outcome)} findings=${body.findings} major=${body.majors.length} fixed=${body.fixed} rejected=${body.rejected.length} minor=${body.minor.length} pre-existing=${body.pre_existing.length} diff=${describeDiff(diff, first)}`;
 }
 
-async function verdict(): Promise<"converged" | "stalled" | undefined> {
-  const dir = await stateDir();
-  if (!existsSync(dir)) return undefined; // no round recorded yet
-  const current = await tree();
+type CheckedRound = Round & { name: string; verify: Outcome["result"] };
 
-  const names = roundNames(dir);
-  const rounds = await Promise.all(
-    names.map(async (name) => {
+const roundNumber = (round: { name: string }): string => round.name.slice("round-".length, -".json".length);
+
+// The latest recorded round on the current tree, when it is green with no critical/major finding. That exact code was
+// verified and reviewed clean, so a later round on other code (a follow-up commit since reverted) does not undo it;
+// a later round on the same tree (red, blocked, or with a major) is a newer judgment of that code and wins.
+export function convergedRound<T extends { tree: string; majors: unknown[]; verify: string }>(rounds: T[], current: string): T | undefined {
+  const latestOnTree = rounds.filter((round) => round.tree === current).at(-1);
+  if (latestOnTree?.verify !== "green" || latestOnTree.majors.length > 0) return undefined;
+  return latestOnTree;
+}
+
+// A file with a critical/major finding in each of the last k green rounds (given oldest first): fixes keep breaking
+// the same code, even when no finding repeats an earlier one. Fewer than k rounds hold no hotspot.
+export function hotspots(rounds: { round: string; majors: Finding[] }[], k = HOTSPOT_ROUNDS): Hotspot[] {
+  const window = rounds.slice(-k);
+  if (window.length < k) return [];
+  const files = [...new Set(window[0].majors.map((finding) => finding.file))];
+  return files
+    .filter((file) => window.every((round) => round.majors.some((finding) => finding.file === file)))
+    .map((file) => ({
+      hotspot: file,
+      rounds: window.map((round) => round.round),
+      titles: window.flatMap((round) => round.majors.filter((finding) => finding.file === file).map((finding) => finding.title)),
+    }));
+}
+
+// The latest round a `resume` let go on from, 0 when the loop never resumed. A stalls/<n>/ without the round file
+// (archived before resume recorded it) counts as 0.
+export function resumedAfter(dir: string): number {
+  const stallsDir = `${dir}/stalls`;
+  if (!existsSync(stallsDir)) return 0;
+  let latest = 0;
+  for (const n of readdirSync(stallsDir)) {
+    const path = `${stallsDir}/${n}/round`;
+    if (!existsSync(path)) continue;
+    const text = readFileSync(path, "utf8").trim();
+    if (!/^\d+$/.test(text)) throw new Error(`${path}: not a round number; only gate.ts resume writes it`);
+    latest = Math.max(latest, Number(text));
+  }
+  return latest;
+}
+
+// Every recorded round, oldest first, with its verification outcome. Throws on a round file the gate cannot trust.
+async function readRounds(dir: string): Promise<CheckedRound[]> {
+  return Promise.all(
+    roundNames(dir).map(async (name) => {
       const round = await readJson(`${dir}/${name}`);
       if (!isRound(round)) throw new Error(`${dir}/${name}: lacks "head", "tree", or the "majors" array`);
       const { result, verify } = await readVerify(dir, name.slice("round-".length, -".json".length));
@@ -967,57 +1023,81 @@ async function verdict(): Promise<"converged" | "stalled" | undefined> {
       return { ...round, name, verify: result };
     }),
   );
+}
+
+// The verdict, and for `converged` the round file it converged on when the round files identify one (convergedRound).
+// A cached converged status written by an older gate may name none: its rounds no longer prove green under today's
+// rules, and `ready` then reads the latest round file, as that gate did.
+type Verdict = { result?: "converged" | "stalled"; convergedOn?: string };
+
+async function verdict(): Promise<Verdict> {
+  const dir = await stateDir();
+  if (!existsSync(dir)) return {}; // no round recorded yet
+  const current = await tree();
+  const rounds = await readRounds(dir);
+  const converged = convergedRound(rounds, current);
 
   // After validating rounds, so a bad round file still breaks the gate; reuse skips the same-defect judge.
   const statusFile = Bun.file(`${dir}/status`);
   if (await statusFile.exists()) {
     const [status, statusTree] = (await statusFile.text()).trim().split(" ");
-    if (statusTree === current && (status === "converged" || status === "stalled")) return status;
+    if (statusTree === current && status === "stalled") return { result: status };
+    if (statusTree === current && status === "converged") return { result: status, convergedOn: converged?.name };
     await statusFile.delete(); // stale: written for code that has changed since
   }
   rmSync(`${dir}/stall.json`, { force: true }); // judged again below; a leftover would explain a stall that no longer holds
 
+  if (converged) {
+    await Bun.write(`${dir}/status`, `converged ${current}\n`);
+    return { result: "converged", convergedOn: converged.name };
+  }
+
   const green = rounds.filter((round) => round.verify === "green");
   const latest = green.at(-1);
-  if (!latest || rounds.at(-1) !== latest) return undefined;
+  if (!latest || rounds.at(-1) !== latest) return {};
 
-  let result: "converged" | "stalled" | undefined;
-  // Converged only for the code that was reviewed; stalled is about the history, so fixes since don't matter.
-  if (latest.majors.length === 0) result = latest.tree === current ? "converged" : undefined;
-  else {
-    const earlier = green.slice(0, -1).flatMap((round) =>
-      round.majors.map((finding) => ({
-        finding,
-        round: round.name.slice("round-".length, -".json".length),
-        rejected: (round.rejected ?? []).some((r) => isObject(r) && r.file === finding.file && r.title === finding.title),
-      })),
-    );
-    const repeats = await repeatsEarlier(dir, latest.majors, earlier);
-    if (repeats.length > 0) {
-      result = "stalled";
-      await Bun.write(`${dir}/stall.json`, `${JSON.stringify(repeats, null, 2)}\n`);
-    }
-  }
-  if (result) await Bun.write(`${dir}/status`, `${result} ${current}\n`);
-  return result;
+  // Converged is only for the code that was reviewed (above): a clean round whose fixes changed the code is
+  // verified and reviewed by one more round. Stalled is about the history, so fixes since don't matter.
+  if (latest.majors.length === 0) return {};
+  const earlier = green.slice(0, -1).flatMap((round) =>
+    round.majors.map((finding) => ({
+      finding,
+      round: roundNumber(round),
+      rejected: (round.rejected ?? []).some((r) => isObject(r) && r.file === finding.file && r.title === finding.title),
+    })),
+  );
+  const repeats = await repeatsEarlier(dir, latest.majors, earlier);
+  // Rounds a resume already let go on from never stall the loop again.
+  const resumedFrom = resumedAfter(dir);
+  const sinceResume = green
+    .filter((round) => Number(roundNumber(round)) > resumedFrom)
+    .map((round) => ({ round: roundNumber(round), majors: round.majors }));
+  const stall: StallEntry[] = repeats.length > 0 ? repeats : hotspots(sinceResume);
+  if (stall.length === 0) return {};
+  await Bun.write(`${dir}/stall.json`, `${JSON.stringify(stall, null, 2)}\n`);
+  await Bun.write(`${dir}/status`, `stalled ${current}\n`);
+  return { result: "stalled" };
 }
 
-// Why the PR must stay draft (reason), and the minors it leaves for the human. Converged already guarantees the
-// latest round is green, has no critical/major finding, and reviewed the current tree. The minor pass is owed only
-// when that round left minors: a round with none has nothing to pass on.
+// Why the PR must stay draft (reason), and the minors it leaves for the human. The minors come from the round the
+// verdict converged on (a later round on another tree judged code that is no longer there), or from the latest round
+// file when the verdict names none. The minor pass is owed only when that round left minors: a round with none has
+// nothing to pass on.
 async function readiness(): Promise<{ reason?: string; minors: string[] }> {
-  if ((await verdict()) !== "converged") return { reason: "the loop has not converged on the current code", minors: [] };
+  const { result, convergedOn } = await verdict();
+  if (result !== "converged") return { reason: "the loop has not converged on the current code", minors: [] };
   const dir = await stateDir();
-  const latestName = roundNames(dir).at(-1);
-  const latest = await readJson(`${dir}/${latestName}`);
-  if (!isObject(latest) || !Array.isArray(latest.minor)) throw new Error(`${dir}/${latestName}: lacks the "minor" array`);
-  const minors = latest.minor.map((finding) => (isObject(finding) ? `${finding.file}: ${finding.title}` : String(finding)));
-  if (minors.length > 0 && !existsSync(`${dir}/minor-pass`)) return { reason: `the minor pass has not run on the ${minors.length} minor finding(s) of ${latestName}`, minors };
+  const name = convergedOn ?? roundNames(dir).at(-1);
+  const round = await readJson(`${dir}/${name}`);
+  if (!isObject(round) || !Array.isArray(round.minor)) throw new Error(`${dir}/${name}: lacks the "minor" array`);
+  const minors = round.minor.map((finding) => (isObject(finding) ? `${finding.file}: ${finding.title}` : String(finding)));
+  if (minors.length > 0 && !existsSync(`${dir}/minor-pass`)) return { reason: `the minor pass has not run on the ${minors.length} minor finding(s) of ${name}`, minors };
   return { minors };
 }
 
 // Archives a stalled loop's verdict so the next round runs. Round files stay: they are the history the next stall
-// judgment compares against.
+// judgment compares against. stalls/<n>/round keeps the latest recorded round, so the rounds behind a hotspot never
+// stall the loop again; it is written before status moves, so a crash halfway leaves the loop still stalled.
 async function resume(): Promise<{ resumed: boolean; message: string }> {
   const dir = await stateDir();
   const statusFile = Bun.file(`${dir}/status`);
@@ -1027,6 +1107,8 @@ async function resume(): Promise<{ resumed: boolean; message: string }> {
   let n = 1;
   while (existsSync(`${dir}/stalls/${n}`)) n++;
   mkdirSync(`${dir}/stalls/${n}`, { recursive: true });
+  const latestRound = roundNames(dir).at(-1);
+  await Bun.write(`${dir}/stalls/${n}/round`, `${latestRound ? roundNumber({ name: latestRound }) : 0}\n`);
   renameSync(`${dir}/status`, `${dir}/stalls/${n}/status`);
   if (existsSync(`${dir}/stall.json`)) renameSync(`${dir}/stall.json`, `${dir}/stalls/${n}/stall.json`);
   return { resumed: true, message: `review loop: resumed; the stall is archived in ${dir}/stalls/${n}/` };
@@ -1097,14 +1179,17 @@ async function judgeSameDefect(dir: string, pairs: { latest: Finding; earlier: F
   return judgments.map(([{ same, reason }]) => ({ same, reason }));
 }
 
-// The pairs behind a stall, so the reader sees which findings repeated without asking. A status reused from an
-// earlier run of the gate prints the stall.json that run wrote.
-async function printRepeats(): Promise<void> {
+// The repeats or hotspots behind a stall, so the reader sees why without asking. A status reused from an earlier run
+// of the gate prints the stall.json that run wrote.
+async function printStall(): Promise<void> {
   const file = Bun.file(`${await stateDir()}/stall.json`);
   if (!(await file.exists())) return;
-  const repeats = (await file.json()) as Repeat[];
-  for (const r of repeats)
-    console.log(`  repeat: ${r.latest.file}: ${r.latest.title} ≈ round ${r.round}: ${r.earlier.title}${r.reason ? ` (${r.reason})` : ""}`);
+  const entries = (await file.json()) as StallEntry[];
+  for (const entry of entries) {
+    if ("hotspot" in entry) console.log(`  hotspot: ${entry.hotspot}: critical or major findings in rounds ${entry.rounds.join(", ")}`);
+    else
+      console.log(`  repeat: ${entry.latest.file}: ${entry.latest.title} ≈ round ${entry.round}: ${entry.earlier.title}${entry.reason ? ` (${entry.reason})` : ""}`);
+  }
 }
 
 function roundArg(value: string | undefined, usage: string): string {
@@ -1188,10 +1273,10 @@ if (import.meta.main) {
       process.exit(resumed ? 0 : 1);
     }
     if (command !== undefined) throw new Error(`unknown command ${command}`);
-    const result = await verdict();
+    const { result } = await verdict();
     if (!result) process.exit(1);
     console.log(`review loop: ${result}`);
-    if (result === "stalled") await printRepeats();
+    if (result === "stalled") await printStall();
     process.exit(0);
   } catch (error) {
     // Exit 1 would mean "continue": any failure must surface as a broken gate instead.

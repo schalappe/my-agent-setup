@@ -30,7 +30,7 @@ Every fixer brief (red fix, findings fix, minor pass) says: run long checks in t
 
 Rounds share nothing but the files under `$(git rev-parse --git-common-dir)/review/<branch>/`, which every worktree shares, so state survives disposable ones. Re-resolve the context at the start of every round and do not carry findings over in memory.
 
-Gate: `gate=~/.agents/skills/review-round/gate.ts`; its header documents every command and file. It stops the loop when the rounds are `converged` (the latest round is the latest green one, found no critical or major issue, and ran on the current code: a round whose fixes changed the code always gets one more round) or `stalled` (a critical or major finding of the latest green round repeats one from an earlier green round, in the same file or after the fixer rejected it; the same pattern found in another file is a new instance and the loop goes on). The gate prints the repeated pairs and writes them to `$dir/stall.json`. Red and blocked rounds never count. "Same defect" is judged by the peer, since fixes shift lines and titles get reworded: the gate runs it once per new pair and keeps each judgment in `$dir/same-defect.json`, so the verdict over the same rounds never changes. The gate alone computes the verdict from the round files and those judgments. A converged loop marks the PR ready once the [minor pass](#minor-pass) has run on its minors; the minors left after it go to the human ([hand over](handover.md)).
+Gate: `gate=~/.agents/skills/review-round/gate.ts`; its header documents every command and file. It stops the loop when the rounds are `converged` (the latest round is the latest green one, found no critical or major issue, and ran on the current code: a round whose fixes changed the code always gets one more round) or `stalled` (a critical or major finding of the latest green round repeats one from an earlier green round, in the same file or after the fixer rejected it; the same pattern found in another file is a new instance and the loop goes on; or a **hotspot**: one file holds a critical or major finding in each of the last three green rounds since the last `resume`, where the findings differ and the file does not). Code restored to the exact tree of a green round without critical or major finding is `converged` again, whatever rounds came after. The gate prints the repeated pairs or the hotspots and writes them to `$dir/stall.json`. Red and blocked rounds never count. "Same defect" is judged by the peer, since fixes shift lines and titles get reworded: the gate runs it once per new pair and keeps each judgment in `$dir/same-defect.json`, so the verdict over the same rounds never changes. The gate alone computes the verdict from the round files and those judgments. A converged loop marks the PR ready once the [minor pass](#minor-pass) has run on its minors; the minors left after it go to the human ([hand over](handover.md)).
 
 ## Preflight (once)
 
@@ -52,13 +52,30 @@ Every shell command from here on, the gate included, runs from `wt` (start each 
 
 Repeat up to `M` times: run one round (below), then `cd "$wt" && bun $gate`.
 
-- Exit 0 → print the gate's line (`review loop: converged|stalled`) and the repeat lines under it.
+- Exit 0 → print the gate's line (`review loop: converged|stalled`) and the `repeat:` or `hotspot:` lines under it.
   - `converged` → run the [minor pass](#minor-pass) if it has not run in this loop; otherwise [hand over](handover.md).
-  - `stalled` → when the latest `round-N.json` has a `commit`, print `The last pushed fix (<commit>) is not verified.` Then ask the user once (ask tool), whatever the End: resume for K more rounds, or stop. Recommend resuming when the judge's reason for a pair is weak (it hinges on wording rather than one code path), or when the two findings of a pair sit in different functions: the reviewer may be re-reading a fix that worked. Resume → `bun $gate resume`, set `M` to K, and run the next round. Stop → the loop stops.
+  - `stalled` on a `hotspot:` line, `$dir/stalls/` does not exist, and a round is left within `M` → the [class fix](#class-fix), without a question.
+  - `stalled` otherwise → the [stopped loop](#stopped-loop).
 - Exit 1 → start the next round.
 - Exit 2 → the gate is broken. Print its stderr and stop. Never repair state files to make it pass.
 
-The minor pass's follow-up round does not count toward `M`. After `M` rounds without exit 0, print `review loop: capped after M rounds` and stop. A loop that stops without handing over (stalled, capped, broken, or a PR that stays draft) [releases the stack](#release-the-stack) and prints the [decisions](#decisions); the hand over does both at its step 3. The verifier writes `verify-N.json` and the gate writes everything else (`round-N.json`, `status`), so the verdict always comes from the verifier's observed results; never write those files yourself.
+The minor pass's follow-up round does not count toward `M`. After `M` rounds without exit 0, print `review loop: capped after M rounds` and take the [stopped loop](#stopped-loop).
+
+### Class fix
+
+A hotspot means the fixes patched symptoms: each round found another case of one rule the code never states. Dispatch one Opus subagent (high) with the absolute path of `wt`, the PR body, and every critical and major finding the rounds recorded on the hotspot file (from their `round-N.json`). It names, in one sentence, the invariant those findings share, enforces it once where every path passes, and deletes the case-by-case code the earlier fixes added. An invariant that needs a schema, contract, or product change is rejected with `decision:` ([Fix](#3-fix)), and findings that share no invariant leave the code unchanged: either way take the [stopped loop](#stopped-loop). Otherwise commit `fix(review): <file> class fix`, push, `bun $gate resume`, and run the next round. One loop patched one editor's state machine case by case for four rounds; the class fix replaced the cases with two rules and the loop converged.
+
+### Stopped loop
+
+A stalled or capped loop ends on a fix that no verification covered, since every round ends with its fix. Close that gap before asking:
+
+1. Closing verification, unless the latest round's `verify-N.json` is green on the current `tree` (the fixer changed nothing): set `N`, `p`, and `tree` as [Resolve context](#resolve-context-every-round) does, skipping its `status` line (the status names this very code, and following it leads back here), then run only `prepare`, the brief with its carries, the verifier, and `bun $gate verify`: no base merge, no fixer on red, no review, no record. Print `last fix <commit>: verified <outcome>, not reviewed`. A later round on the same code reuses that `verify-N.json`.
+2. Print the [decisions](#decisions) first, so the question is answered with them in view. Then ask the user once (ask tool), whatever the End, with the options that apply:
+   - Resume for K more rounds → `bun $gate resume` when stalled, set `M` to K, and run the next round. Recommend it when the judge's reason for a pair is weak (it hinges on wording rather than one code path), or when the two findings of a pair sit in different functions: the reviewer may be re-reading a fix that worked.
+   - Merge with known limits, offered only when that verification is green → add a `Known limits` section to the PR body that names each open major and the fix that was verified and not reviewed, draft one redesign issue with the `agent-ready-issue` skill and link it there, then `gh pr ready <number>` and [hand over](handover.md) from its step 2, where this choice answers step 4: Merge for `ask` and `send`, and for `stop` the PR is landed up to ready to merge, as `stop` always means. Choosing it accepts the default of every decision just printed; the option says so. Recommend it when a hotspot stalls the loop again after its class fix: three diagnoses of such loops ended on this option, after 5 to 7 rounds that changed nothing.
+   - Stop → the loop stops and the PR stays as it is.
+
+A loop that stops without handing over (stalled, capped, broken, or a PR that stays draft) [releases the stack](#release-the-stack) and prints the [decisions](#decisions); the hand over does both at its step 3. The verifier writes `verify-N.json` and the gate writes everything else (`round-N.json`, `status`), so the verdict always comes from the verifier's observed results; never write those files yourself.
 
 ## Resolve context (every round)
 
@@ -70,7 +87,7 @@ tree=$(bun $gate tree)   # hash of tracked + untracked files; the real index is 
 ```
 
 - PR: `gh pr view --json number,baseRefName,body`.
-- `$dir/status` reads `<status> <tree>` with that same tree → `converged`: stop and say `Review loop already converged for this code.` `stalled`: say `Review loop stalled for this code.` and take the `stalled` branch of the [loop](#loop). A status for another tree is stale: ignore it.
+- `$dir/status` reads `<status> <tree>` with that same tree → `converged`: say `Review loop already converged for this code.` and take the `converged` branch of the [loop](#loop), so a minor pass or hand over that an interruption left undone still runs. `stalled`: say `Review loop stalled for this code.` and take the `stalled` branch. A status for another tree is stale: ignore it.
 - Diff handoff: `bun $gate prepare $N --base <baseRefName>`. It fetches the base and writes, against the merge-base, `$p/files.txt`, one patch per file (renames split into a delete and an add, so nobody reads the whole diff), and `$p/base` (the merge-base sha). The working tree is included, so fixes from a previous round are always seen.
 
 ## 1. Verify
@@ -91,7 +108,7 @@ Green means the repo's checks passed and a live exercise of the change passed. T
    - busy (another session holds it) → launch nothing; the verifier's Doctor reports it and its scenarios come back `blocked`.
    The verifier brief then says `the loop launched the stack; do not launch or clean it up`. Without such a skill, the verifier starts and stops what its scenarios need.
 
-Reuse first: an earlier verification of this exact code is reused instead of dispatched. `K=$(rg -l -F "$tree" --max-depth 1 -g 'verify-*.json' "$dir" | sed -E 's/.*verify-([0-9]+)\.json$/\1/' | sort -n | tail -1)`; a `K` below `N` → `bun $gate reuse $K $N` (it refuses another tree), then `bun $gate verify $N`. Green → skip the dispatch. Red or blocked → `bun $gate attempt $N` (it prints `same-tree`) and dispatch: the brief carries that attempt's passing entries. `verify-0.json` is the final verification of the `implement` skill, written before the loop, and is reused the same way.
+Reuse first: an earlier verification of this exact code is reused instead of dispatched. `K=$(rg -l -F "$tree" --max-depth 1 -g 'verify-*.json' "$dir" | sed -E 's/.*verify-([0-9]+)\.json$/\1/' | sort -n | tail -1)`; a `K` below `N` → `bun $gate reuse $K $N` (it refuses another tree), then `bun $gate verify $N`; `K` equal to `N` (a [closing verification](#stopped-loop) wrote it) → `bun $gate verify $N` directly. Green → skip the dispatch. Red or blocked → `bun $gate attempt $N` (it prints `attempt A same-tree`) and dispatch: the brief carries that attempt's passing entries. `verify-0.json` is the final verification of the `implement` skill, written before the loop, and is reused the same way.
 
 Later verifications rerun only what the changes reach. `bun $gate brief $N > "$p/verify.brief"` writes the mechanical part of the brief and prints on stderr the latest green verification K (0 when only a green `verify-0.json` came before), the files changed since its tree, and its passing entries as carry candidates, one JSON line each. No green verification before → the brief runs everything. Otherwise judge each candidate:
 
@@ -178,12 +195,17 @@ Append each `decision:` rejection to `$dir/decisions.md` and keep going: decisio
 
 Runs once per loop, when the gate first prints `converged`. `$dir/minor-pass` exists → it already ran: [hand over](handover.md). Owners almost always ask for the minors to be fixed in the same PR, so the loop does it before handing over.
 
-1. Read `minor` from the latest `round-N.json`. Empty → [hand over](handover.md).
+1. `bun $gate ready`. Exit 0 → no minor is owed: [hand over](handover.md). Exit 1 with `the minor pass has not run on the … minor finding(s) of round-K.json` → read `minor` from that file: the gate names the round the loop converged on, which is not always the latest. Then run [Land](handover.md#land) step 1's base listing: a file listed → merge the base, push, and go back to the [loop](#loop) for a round on the merged code, since the loop has not converged on it. The pass's own round merges no base, so its revert restores exactly the converged code.
 2. `touch "$dir/minor-pass"`, so a pass that changes nothing still counts as run. Dispatch one Opus subagent (medium) with the absolute path of `wt`, the PR body, those minor findings, and the patch paths of the files they touch. It fixes each one or rejects it under the [Fix](#3-fix) rules (including `decision:`) and does not commit; its answer is reported, not recorded.
-3. Nothing changed → report the rejections and [hand over](handover.md). Otherwise commit `chore(review): minor fixes` and push, then run one more full round (verify, review, fix, record) and `bun $gate`. That round reviews the minor fixes; its own minors go to the human.
-4. The gate's exit after that round decides as usual: exit 1 continues the loop within `M` plus that one extra round.
+3. Nothing changed → report the rejections and [hand over](handover.md). Otherwise `git add -A && git commit -m "chore(review): minor fixes" && git push`, one commit, then run one more round with these changes: it skips the base listing, dispatches no fixer (a red or blocked verification included), and stops after `bun $gate reviewed $N`, before its record.
+4. That round is green with no critical or major finding → record it, `bun $gate` prints `converged`: [hand over](handover.md). Its own minors go to the human.
+5. Otherwise the pass is all or nothing: nothing is fixed forward, since a fix on top of the minor fixes reopens a loop that had converged. In this order, so an interruption never loses a finding or leaves it unanswered:
+   1. Append each critical and major finding of the round to `$dir/decisions.md` as a `decision:` (fix it in a follow-up, or accept it), so a `send` End asks before it merges: some sit on lines the minor fixes never touched, in code the loop had passed.
+   2. `git revert --no-edit <the minor fixes commit> && git push`.
+   3. Record the round, with those findings under `rejected` in `$p/fix.json` (reason: `decision: minor pass reverted`).
+   4. `bun $gate` prints `converged`, since the code is again the tree the loop converged on: [hand over](handover.md). Anything else → the tree differs from the converged one (a file a check left behind, say): print `git status --porcelain` and take the [stopped loop](#stopped-loop).
 
-Report each minor as fixed or rejected with its reason.
+Report each minor as fixed or rejected with its reason, or, after a revert, as open again. Seven loops that fixed forward here ran 32 further rounds after they had converged. A pass interrupted between its commit and its record resumes as an ordinary round, fixer included: the older behaviour, slower and never unreviewed.
 
 ## Hand over
 

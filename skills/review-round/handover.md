@@ -2,7 +2,7 @@
 
 The last phase of [review-round](SKILL.md): `wt`, `dir`, `gate`, and the End are as SKILL.md sets them.
 
-Runs when the loop stops after `converged`. A stalled, capped, or broken loop never gets here, so its PR and its worktree stay as they are.
+Runs when the loop stops after `converged`. A stalled or capped loop gets here only when the user chose to merge with known limits ([stopped loop](SKILL.md#stopped-loop)), enters at step 2 with step 4 already answered; otherwise its PR and its worktree stay as they are, as do a broken loop's.
 
 1. `bun $gate ready`:
    - Exit 0 → if `gh pr view --json isDraft --jq .isDraft` prints `true`, run `gh pr ready <number>` and print `PR #<number> marked ready`. Print its `minor left:` lines: those minors go to the human.
@@ -45,7 +45,7 @@ Takes the ready PR to its merge. It runs for Merge, and for `stop`, which leaves
 A check that the loop's own verification passed fails on GitHub. Read its log (`gh pr checks <number>`, then `gh run view <run-id> --log-failed`) and sort it:
 
 - Infrastructure (a runner, network, or registry error, or a timeout in a step the diff does not reach) → `gh run rerun <run-id> --failed`, once, and wait again.
-- Repository (the PR's code fails the check) → dispatch one Opus subagent (medium) with the absolute path of `wt` and the failing log, to fix only what that check requires. Commit `fix(ci): <check>` and push. The code changed after the loop converged, so run the [Loop](SKILL.md#loop) for up to 2 more rounds; the verifier brief adds the failed check's command when the repo can run it locally. `converged` → resume [Land](#land) at step 1, without a second hand over. Anything else → stop and report it.
+- Repository (the PR's code fails the check) → dispatch one Opus subagent (medium) with the absolute path of `wt` and the failing log, to fix only what that check requires. Commit `fix(ci): <check>` and push. The code changed after the loop converged, so run the [Loop](SKILL.md#loop) for up to 2 more rounds; the verifier brief adds the failed check's command when the repo can run it locally. `converged` → resume [Land](#land) at step 1, without a second hand over. Anything else → stop and report it, with no class fix and no stopped-loop question.
 
 A check that fails again after its rerun or its fix, or a fixer that changes nothing → stop and report the check with its log. The PR stays open and unmerged.
 

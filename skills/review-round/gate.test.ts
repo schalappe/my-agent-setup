@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { baseRunRan, describeDiff, diffSize, pairKey, repeatsEarlier, securityChecklist } from "./gate";
+import { baseRunRan, convergedRound, describeDiff, diffSize, type Finding, hotspots, pairKey, repeatsEarlier, resumedAfter, securityChecklist } from "./gate";
 
 test("diffSize counts hand-written lines and skips generated and binary files", () => {
   const numstat = "10\t2\tsrc/a.ts\n300\t280\tbun.lock\n-\t-\tlogo.png\n5\t0\tdocs/with\ttab.md\n";
@@ -35,6 +35,283 @@ test("repeatsEarlier reads kept judgments and never asks the judge for a pair it
   expect(await repeatsEarlier(dir, [{ ...latest, line: 40 }], [sameFile])).toEqual([
     { latest: { ...latest, line: 40 }, earlier: sameFile.finding, round: "1", reason: "both drop the row" },
   ]);
+});
+
+const major = (file: string, title: string): Finding => ({ file, line: 1, title, why: `${title} breaks` });
+
+test("hotspots fires on a file with a major in each of the last 3 green rounds", () => {
+  const rounds = [
+    { round: "1", majors: [major("src/a.ts", "Lost write"), major("src/b.ts", "Bad parse")] },
+    { round: "2", majors: [major("src/a.ts", "Double charge")] },
+    { round: "3", majors: [major("src/a.ts", "Stale cache"), major("src/a.ts", "Wrong total")] },
+  ];
+  expect(hotspots(rounds)).toEqual([
+    { hotspot: "src/a.ts", rounds: ["1", "2", "3"], titles: ["Lost write", "Double charge", "Stale cache", "Wrong total"] },
+  ]);
+  expect(hotspots(rounds.slice(1))).toEqual([]);
+});
+
+test("hotspots needs the file in every round of the window, and looks only at the window", () => {
+  const gap = [
+    { round: "1", majors: [major("src/a.ts", "Lost write")] },
+    { round: "2", majors: [major("src/b.ts", "Bad parse")] },
+    { round: "3", majors: [major("src/a.ts", "Stale cache")] },
+  ];
+  expect(hotspots(gap)).toEqual([]);
+  const old = [
+    { round: "1", majors: [major("src/a.ts", "Lost write")] },
+    { round: "2", majors: [major("src/a.ts", "Double charge")] },
+    { round: "3", majors: [major("src/a.ts", "Stale cache")] },
+    { round: "4", majors: [major("src/b.ts", "Bad parse")] },
+  ];
+  expect(hotspots(old)).toEqual([]);
+});
+
+test("convergedRound takes the latest round on the current tree: a later judgment of the same code wins", () => {
+  const clean = { name: "round-1.json", tree: "T", majors: [], verify: "green" };
+  const otherTree = { name: "round-2.json", tree: "U", majors: [major("a.py", "Lost write")], verify: "green" };
+  expect(convergedRound([clean, otherTree], "T")).toBe(clean);
+  expect(convergedRound([clean, { ...clean, name: "round-2.json", verify: "red" }], "T")).toBeUndefined();
+  expect(convergedRound([clean, { ...clean, name: "round-2.json", verify: "blocked" }], "T")).toBeUndefined();
+  expect(convergedRound([clean, { ...otherTree, tree: "T" }], "T")).toBeUndefined();
+  expect(convergedRound([clean, otherTree], "V")).toBeUndefined();
+});
+
+type Review = { severity: "major" | "minor"; title: string };
+
+// A throwaway PR repository driven through the real gate CLI: each round is prepared, verified through an exec record,
+// sliced, reviewed by a trace that reads every patch, and recorded, exactly as the loop does it.
+function gateRepo() {
+  // git reports real paths (/private/var on macOS), and the trace must name the patches the way the gate does.
+  const root = realpathSync(mkdtempSync(`${tmpdir()}/gate-cli-`));
+  const repo = `${root}/repo`;
+  mkdirSync(`${root}/bin`);
+  // slice reads the PR intent through gh; no PR exists here.
+  writeFileSync(`${root}/bin/gh`, "#!/bin/sh\necho 'Test pull request intent.'\n");
+  chmodSync(`${root}/bin/gh`, 0o755);
+  const env = {
+    ...process.env,
+    PATH: `${root}/bin:${process.env.PATH}`,
+    SHELL: "/bin/sh",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: "Test",
+    GIT_AUTHOR_EMAIL: "test@example.com",
+    GIT_COMMITTER_NAME: "Test",
+    GIT_COMMITTER_EMAIL: "test@example.com",
+  };
+  const run = (command: string[], cwd = repo) => {
+    const result = Bun.spawnSync(command, { cwd, env, stdout: "pipe", stderr: "pipe" });
+    return { exit: result.exitCode, out: result.stdout.toString(), err: result.stderr.toString() };
+  };
+  const git = (...args: string[]) => {
+    const result = run(["git", ...args]);
+    if (result.exit !== 0) throw new Error(`git ${args.join(" ")}: ${result.err}`);
+    return result.out.trim();
+  };
+  const gate = (...args: string[]) => run(["bun", new URL("./gate.ts", import.meta.url).pathname, ...args]);
+  const mustGate = (...args: string[]) => {
+    const result = gate(...args);
+    if (result.exit !== 0) throw new Error(`gate.ts ${args.join(" ")} exited ${result.exit}: ${result.out}${result.err}`);
+    return result.out;
+  };
+  let edits = 0;
+  const commit = (message: string) => {
+    edits++;
+    writeFileSync(`${repo}/a.py`, `x = ${edits}\n`);
+    git("commit", "-qam", message);
+  };
+
+  run(["git", "init", "-q", "--bare", "-b", "main", `${root}/origin.git`], root);
+  run(["git", "init", "-q", "-b", "main", repo], root);
+  writeFileSync(`${repo}/a.py`, "x = 0\n");
+  git("add", "a.py");
+  git("commit", "-qm", "base");
+  git("remote", "add", "origin", `${root}/origin.git`);
+  git("push", "-q", "origin", "main");
+  git("checkout", "-qb", "feature");
+  const dir = `${repo}/.git/review/feature`;
+
+  // A red round runs a failing check and is recorded unreviewed, as the loop records one.
+  const round = (n: number, reviews: Review[], { red = false } = {}) => {
+    const roundDir = `${dir}/round-${n}`;
+    const command = red ? "false" : "true";
+    mustGate("prepare", String(n), "--base", "main");
+    expect(gate("exec", String(n), "--", command).exit).toBe(red ? 1 : 0);
+    const verify = { head: git("rev-parse", "HEAD"), tree: mustGate("tree").trim(), checks: [{ command, exit: red ? 1 : 0 }], scenarios: [] };
+    writeFileSync(`${dir}/verify-${n}.json`, JSON.stringify(verify));
+    if (red) {
+      mustGate("record", String(n));
+      return;
+    }
+    for (const name of mustGate("slice", String(n)).split("\n").filter(Boolean)) {
+      const paths = readFileSync(`${roundDir}/slice-${name.replace(/^sec-/, "")}.txt`, "utf8").split("\n").filter(Boolean);
+      const reads = paths.map((path) => ({ type: "tool_use", name: "Read", input: { file_path: `${roundDir}/patches/${path.replaceAll("/", "__")}.patch` } }));
+      const findings = name.startsWith("sec-")
+        ? []
+        : reviews.map(({ severity, title }) => ({ severity, file: "a.py", line: 1, title, why: `${title} breaks`, fix: "fix it", trigger: "any input", pre_existing: false }));
+      const trace = [{ type: "assistant", message: { content: reads } }, { type: "result", result: "", structured_output: { findings } }];
+      writeFileSync(`${roundDir}/review-${name}.jsonl`, trace.map((event) => JSON.stringify(event)).join("\n"));
+    }
+    mustGate("reviewed", String(n));
+    mustGate("record", String(n));
+  };
+  // Keeps a judgment for every same-file pair of these major titles, so the verdict never runs the judge: "different"
+  // unless the pair is listed in `same` as [latest, earlier].
+  const keepJudgments = (titles: string[], same: [string, string][] = []) => {
+    const judgments: Record<string, { same: boolean; reason: string }> = {};
+    titles.forEach((latest, i) =>
+      titles.slice(0, i).forEach((earlier) => {
+        const isSame = same.some(([l, e]) => l === latest && e === earlier);
+        judgments[pairKey(major("a.py", latest), major("a.py", earlier))] = { same: isSame, reason: isSame ? "both drop the row" : "different defects" };
+      }),
+    );
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(`${dir}/same-defect.json`, JSON.stringify(judgments));
+  };
+  return { root, dir, git, gate, commit, round, keepJudgments };
+}
+
+test("a revert back to a converged round's tree converges again and hands over that round's minors", () => {
+  const { root, dir, git, gate, commit, round } = gateRepo();
+  try {
+    commit("feature");
+    round(1, [{ severity: "minor", title: "Round one minor" }]);
+    expect(gate().out).toBe("review loop: converged\n");
+    commit("minor fixes");
+    round(2, [{ severity: "major", title: "Round two major" }, { severity: "minor", title: "Round two minor" }]);
+    expect(gate().exit).toBe(1);
+
+    git("revert", "--no-edit", "HEAD");
+    const verdict = gate();
+    expect(verdict).toMatchObject({ exit: 0, out: "review loop: converged\n" });
+    const ready = gate("ready");
+    expect(ready.out).toContain("minor left: a.py: Round one minor");
+    expect(ready.out).not.toContain("Round two minor");
+    expect(ready.out).toContain("round-1.json");
+    expect(ready.exit).toBe(1);
+
+    writeFileSync(`${dir}/minor-pass`, "");
+    expect(gate("ready")).toMatchObject({ exit: 0, out: "minor left: a.py: Round one minor\nreview loop: ready\n" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("majors in one file for 3 green rounds stall the loop, and a resume does not count those rounds again", () => {
+  const { root, dir, gate, commit, round, keepJudgments } = gateRepo();
+  try {
+    const titles = ["Lost write", "Double charge", "Stale cache", "Wrong total"];
+    // Every pair is judged different, so only the hotspot rule can stall the loop.
+    keepJudgments(titles);
+
+    for (const [i, title] of titles.slice(0, 3).entries()) {
+      commit(`fix ${i}`);
+      round(i + 1, [{ severity: "major", title }]);
+    }
+    expect(gate()).toMatchObject({
+      exit: 0,
+      out: "review loop: stalled\n  hotspot: a.py: critical or major findings in rounds 1, 2, 3\n",
+    });
+    expect(JSON.parse(readFileSync(`${dir}/stall.json`, "utf8"))).toEqual([
+      { hotspot: "a.py", rounds: ["1", "2", "3"], titles: titles.slice(0, 3) },
+    ]);
+    expect(gate("resume").exit).toBe(0);
+    expect(readFileSync(`${dir}/stalls/1/round`, "utf8")).toBe("3\n");
+
+    commit("fix 3");
+    round(4, [{ severity: "major", title: titles[3] }]);
+    expect(gate().exit).toBe(1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("red rounds stay out of the hotspot window, and a red latest round never stalls", () => {
+  const { root, gate, commit, round, keepJudgments } = gateRepo();
+  try {
+    const titles = ["Lost write", "Stale cache", "Wrong total"];
+    keepJudgments(titles);
+    commit("feature");
+    round(1, [{ severity: "major", title: titles[0] }]);
+    commit("fix 1");
+    round(2, [], { red: true });
+    commit("fix 2");
+    round(3, [{ severity: "major", title: titles[1] }]);
+    commit("fix 3");
+    round(4, [{ severity: "major", title: titles[2] }]);
+    expect(gate()).toMatchObject({ exit: 0, out: "review loop: stalled\n  hotspot: a.py: critical or major findings in rounds 1, 3, 4\n" });
+
+    commit("fix 4");
+    round(5, [], { red: true });
+    expect(gate()).toMatchObject({ exit: 1, out: "" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("a same-defect repeat stalls the loop on its own, before any hotspot", () => {
+  const { root, dir, gate, commit, round, keepJudgments } = gateRepo();
+  try {
+    const titles = ["Lost write", "Double charge", "Stale cache"];
+    keepJudgments(titles, [["Stale cache", "Double charge"]]);
+    for (const [i, title] of titles.entries()) {
+      commit(`fix ${i}`);
+      round(i + 1, [{ severity: "major", title }]);
+    }
+    expect(gate()).toMatchObject({
+      exit: 0,
+      out: "review loop: stalled\n  repeat: a.py: Stale cache ≈ round 2: Double charge (both drop the row)\n",
+    });
+    const stall = JSON.parse(readFileSync(`${dir}/stall.json`, "utf8"));
+    expect(stall).toHaveLength(1);
+    expect(stall[0]).toMatchObject({ round: "2", reason: "both drop the row" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("ready follows a converged status cached by an older gate whose round no longer proves green", () => {
+  const { root, dir, gate, commit, round } = gateRepo();
+  try {
+    commit("feature");
+    round(1, [{ severity: "minor", title: "Round one minor" }]);
+    expect(gate().out).toBe("review loop: converged\n");
+    // Rounds recorded before exec records existed have none: today's rules read them as blocked.
+    rmSync(`${dir}/round-1/exec`, { recursive: true });
+    expect(gate("verify", "1").out).toStartWith("blocked:");
+
+    expect(gate()).toMatchObject({ exit: 0, out: "review loop: converged\n" });
+    expect(gate("ready")).toMatchObject({
+      exit: 1,
+      out: "minor left: a.py: Round one minor\nreview loop: stays draft (the minor pass has not run on the 1 minor finding(s) of round-1.json)\n",
+    });
+    writeFileSync(`${dir}/minor-pass`, "");
+    expect(gate("ready")).toMatchObject({ exit: 0, out: "minor left: a.py: Round one minor\nreview loop: ready\n" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("resumedAfter takes the highest resume marker, and an archive without one counts as 0", () => {
+  const root = mkdtempSync(`${tmpdir()}/resumed-after-`);
+  // Directory listing order is the filesystem's, so the higher marker sits once in each archive.
+  const stalls = (name: string, markers: (string | undefined)[]) => {
+    const dir = `${root}/${name}`;
+    markers.forEach((marker, i) => {
+      mkdirSync(`${dir}/stalls/${i + 1}`, { recursive: true });
+      if (marker !== undefined) writeFileSync(`${dir}/stalls/${i + 1}/round`, marker);
+    });
+    return dir;
+  };
+  try {
+    expect(resumedAfter(stalls("none", []))).toBe(0);
+    expect(resumedAfter(stalls("unmarked", [undefined]))).toBe(0);
+    expect(resumedAfter(stalls("higher-second", [undefined, "3\n", "6\n"]))).toBe(6);
+    expect(resumedAfter(stalls("higher-first", [undefined, "6\n", "3\n"]))).toBe(6);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("securityChecklist reads only the checkbox bullets under the Verification heading", () => {
