@@ -1,7 +1,6 @@
 ---
 name: explain
 description: "Use when the user asks how some code works, or why it is shaped the way it is (history, tradeoffs), and wants an answer backed by cited evidence."
-disable-model-invocation: true
 ---
 
 # Explain
