@@ -39,7 +39,7 @@ Primary tracker, proposed from the remote: **GitHub** (`gh`, the default), **Git
 
 Then ask whether a **second tracker** holds some tickets (recommended: **no** unless exploration found one). When yes, record for it:
 
-- which ticket kinds live where (e.g. kari-banking: business requests and UAT defects in YouTrack, implementation issues on GitHub), and that a topic may exist in both, so both are checked;
+- which ticket kinds live where (e.g. business requests and UAT defects in YouTrack, implementation issues on GitHub), and that a topic may exist in both, so both are checked;
 - access path (CLI or MCP server from `.mcp.json`) and how a ticket is referenced (`project-<n>`);
 - comment language and title conventions;
 - assignee when a ticket is closed or handed back.

@@ -9,19 +9,9 @@ metadata:
 
 # Logging Best Practices Skill
 
-Version: 1.0.0
-
 ## Purpose
 
 This skill provides guidelines for implementing effective logging in applications. It focuses on **wide events** (also called canonical log lines) - a pattern where you emit a single, context-rich event per request per service, enabling powerful debugging and analytics.
-
-## When to Apply
-
-Apply these guidelines when:
-- Writing or reviewing logging code
-- Adding console.log, logger.info, or similar
-- Designing logging strategy for new services
-- Setting up logging infrastructure
 
 Before instrumenting, write the 2-4 questions an on-call engineer will ask during an incident; every field you add should help answer one. Before calling it done, trigger each path (success, refusal, error) and read the real emitted events.
 
@@ -96,32 +86,14 @@ Use middleware to handle wide event infrastructure (timing, status, environment,
 5. **Unstructured strings**: `console.log('something happened')` instead of structured data
 6. **Inconsistent schemas**: Different field names across services
 
-## Guidelines
+## Rules
 
-### Wide Events (`rules/wide-events.md`)
-- Emit one wide event per service hop
-- Include all relevant context
-- Connect events with request ID
-- Emit at request completion in finally block
+Read the rule file that matches the work:
 
-### Context (`rules/context.md`)
-- Support high cardinality fields (user_id, request_id)
-- Include high dimensionality (many fields)
-- Always include business context
-- Always include environment characteristics (commit_hash, version, region)
-
-### Structure (`rules/structure.md`)
-- Use a single logger throughout the codebase
-- Use middleware for consistent wide events
-- Use JSON format
-- Maintain consistent schema
-- Simplify to info and error levels
-- Never log unstructured strings
-
-### Common Pitfalls (`rules/pitfalls.md`)
-- Avoid multiple log lines per request
-- Design for unknown unknowns
-- Always propagate request IDs across services
+- [`rules/wide-events.md`](rules/wide-events.md): when shaping the per-request event, where it is emitted, and how request IDs connect events across hops.
+- [`rules/context.md`](rules/context.md): when choosing which fields go in the event (cardinality, business context, environment).
+- [`rules/structure.md`](rules/structure.md): when setting up the logger, middleware, JSON format, field schema, or log levels.
+- [`rules/pitfalls.md`](rules/pitfalls.md): when reviewing existing logging for the common mistakes.
 
 References:
 - [Logging Sucks](https://loggingsucks.com)

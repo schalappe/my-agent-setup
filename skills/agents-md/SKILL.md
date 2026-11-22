@@ -7,11 +7,6 @@ description: Create a repository's AGENTS.md when it is missing, or audit and re
 
 Agents load AGENTS.md into every session in its repository. Every line costs context on every task, so each line must hold a fact about this repository that an agent cannot cheaply rediscover and that changes what it does.
 
-Sources behind these rules:
-
-- The Coldtea field study read the root AGENTS.md of the 100 most-starred repos that have one (August 2026). Orientation and verification take about half of the words. The median file has 1,198 words under 14 headings. Of the files, 86% contain explicit "don't" rules, 79% give commit and PR rules, and 74% give test instructions. Only 25% say how to run a single test.
-- The warrenday gist is an example AGENTS.md for one real project. It states that "this file is a failure log, not a wishlist" and that general advice "belongs nowhere". It moves long workflows into skills and subsystem rules into nested files, and it keeps the root file under 500 lines.
-
 ## Rules for the file
 
 1. Every rule is specific to this repo. Test each line: if it could appear unchanged in another project's AGENTS.md, delete it. Generic behavior (be concise, ask when unsure, don't hide failures) belongs in the user's global instructions, not here.

@@ -1,7 +1,6 @@
 ---
 name: unslop
-description: Cut AI tells from any writing. Must always apply.
-disable-model-invocation: true
+description: "Cut AI tells from any writing. Use when writing or editing prose a human will read: docs, READMEs, AGENTS.md, PR bodies, issues, tracker comments, reports."
 ---
 
 # Unslop
@@ -65,7 +64,7 @@ Rule numbers are stable ids that other skills cite. A removed rule leaves a gap.
 30. **Cut adverbs, or use a stronger verb.** "runs quickly" becomes "is fast" or the number. "significantly improves" becomes the measured delta. An adverb propping up a weak verb means the verb is wrong.
 31. **Prefer the plain word.** "utilize" becomes "use", "leverage" becomes "use", "facilitate" becomes "help", "numerous" becomes "many", "in the event that" becomes "if". The fancier synonym is rarely clearer.
 32. **Mannered prose.** Metaphor or flourish where a literal phrase exists: aphorisms ("wire it or delete it"), rhetorical fragments for effect, personified code ("the plan holds it"), figurative verbs ("rides along", "stands on"), stock framing phrases. "A dial worth turning" becomes "a parameter worth varying". Rule 26 covers the metaphor nouns.
-33. **Over-compression.** Dropped articles, verbless fragments, symbol-speak, and abbreviations that make the reader decode instead of read. "Parser rejects bad date → exit 2, no write" becomes "The parser rejects a bad date, exits with code 2, and writes nothing." Write whole sentences with their articles and verbs, and spell out arrows and abbreviations.
+33. **Over-compression.** Dropped articles, verbless fragments, symbol-speak, and abbreviations that make the reader decode instead of read. "Parser rejects bad date → exit 2, no write" becomes "The parser rejects a bad date, exits with code 2, and writes nothing." Write whole sentences with their articles and verbs, and spell out arrows and abbreviations. Code comments compressed under the `caveman-comments` skill are exempt.
 34. **One mode per document.** Tutorial, how-to, reference, or explanation. A how-to that stops to teach, or reference that argues, mixes modes. Split and link.
 35. **One possible reading.** Keep "only" and "not" next to the word they modify, because "fails only on growth" and "only fails on growth" differ. Make each "it" and "this" point at one noun, repeating the noun when in doubt. Write "a, b, or both" and "file or files", never "a/b" or "file(s)".
 36. **Condition before the instruction.** Put the goal or condition first. "To delete the file, run `rm`." "If the build fails, read the log."

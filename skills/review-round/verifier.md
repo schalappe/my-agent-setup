@@ -29,7 +29,7 @@ cd <worktree> && bun ~/.agents/skills/review-round/gate.ts exec <round> -- '<com
 - Setup (installs, migrations, starting a service) runs directly; it is not a check.
 - Your shell ends a call at 10 minutes. A check that may run longer starts in the background, `nohup bun ~/.agents/skills/review-round/gate.ts exec <round> -- '<command>' > /dev/null 2>&1 &`, and you poll it with `bun ~/.agents/skills/review-round/gate.ts exec <round> --wait`: it returns within 9 minutes, lists every exec record, and exits 1 while one still runs. Keep polling until it exits 0; your turn ends only after every check has finished.
 - Start the longest check first, in the background as above, then run the scenarios and the short checks while it runs, and poll it last: a sequential run made the longest check wait 5 to 30 min for the browser scenarios. Keep them sequential only when the repo's `verify-<app>` skill or the brief says the two cannot share the machine.
-- Run prescribed checks once after implementation has settled, exactly as written. Never add flags that make the build redo finished work (`--rerun-tasks`, `--no-build-cache`, a `clean` task) unless the brief prescribes them: a task Gradle reports up to date or from cache on unchanged inputs is valid evidence, and a forced rerun costs minutes.
+- Run prescribed checks once after implementation has settled, exactly as written. Never add flags that make the build redo finished work (`--rerun-tasks`, `--no-build-cache`, a `clean` task) unless the brief prescribes them: a task the build tool reports up to date or from cache on unchanged inputs is valid evidence, and a forced rerun costs minutes.
 - A failed check is rerun once. Still failing → its base run, which tells a failure the PR introduced from one already on the base: `git worktree add --detach <evidence dir>/base <base sha from the brief>`, the repo's install there and the environment the PR's run used (a backend slot or database the repo's `AGENTS.md` assigns per worktree), then from the worktree root `bun ~/.agents/skills/review-round/gate.ts exec <round> --base -- '<same command>'` (the gate runs it in the base worktree). Remove it afterwards with `git worktree remove --force <evidence dir>/base`. Record the check with its exit on the PR; the gate reads it as a known failure when the base run failed too, and blocks the round when the base run stopped before the check ran (under a tenth of the PR run's time).
 
 ## Verify file
@@ -39,7 +39,7 @@ Write the verify file the brief names, once, at the end. It is the only result t
 ```json
 {"head": "abc1234…", "tree": "9f3e…",
  "checks": [{"command": "bun test", "exit": 0, "seconds": 41},
-            {"command": "cd backend && ./gradlew :integration-tests:test", "exit": 0, "seconds": 1380, "carried_from": 1}],
+            {"command": "cd backend && make integration-test", "exit": 0, "seconds": 1380, "carried_from": 1}],
  "scenarios": [{"name": "POST /orders with valid body returns 201 and creates the row", "result": "pass", "surface": "api", "seconds": 12},
                {"name": "Deleting the last stock re-enables « Supprimer »", "result": "pass", "surface": "browser", "seconds": 95},
                {"name": "Export of an empty month", "result": "blocked", "surface": "api", "reason": "dev DB unreachable"}]}
@@ -58,6 +58,6 @@ Return a compact report:
 - Evidence references
 - Untested states and blockers
 
-Close resources you created: record each process's PID when you start it (`$!`) and stop it by that PID. Other sessions run their own servers and Gradle daemons on this machine, so leave every process you did not start running.
+Close resources you created: record each process's PID when you start it (`$!`) and stop it by that PID. Other sessions run their own servers and build daemons on this machine, so leave every process you did not start running.
 
 # Assignment

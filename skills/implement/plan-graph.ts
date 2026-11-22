@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Task graph of GitHub issues, for `/implement-plan` and the `implement` skill:
+// Task graph of GitHub issues, for the `implement` skill (`/implement`):
 // `bun ~/.agents/skills/implement/plan-graph.ts <owner/repo> <issue> [<issue>...]`.
 // Every parent expands recursively to its sub-issues; a ticket is a leaf issue. Prints one row per open ticket:
 // its wave (1 = startable now; computed from GitHub's native "blocked by" links, closed tickets count as done),

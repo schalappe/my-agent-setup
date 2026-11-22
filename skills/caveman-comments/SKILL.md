@@ -1,6 +1,6 @@
 ---
 name: caveman-comments
-description: compress code comments while enforcing Python and TypeScript documentation conventions. Use when writing or editing comments, docstrings, JSDoc, Rustdoc, Python, TypeScript, or TSX.
+description: compress code comments while enforcing Python and TypeScript documentation conventions. Use when writing or editing comments or docstrings (including JSDoc and Rustdoc) in Python, TypeScript/TSX, or Rust code.
 ---
 
 Caveman comments: substance stay, fluff die. Why > what.
@@ -74,6 +74,7 @@ fn fetch_user(id: i64) -> Result<User, FetchErr> { ... }
 
 ## Boundaries
 
+- Compress code comments and docstrings only. Prose outside code (docs, PR bodies, issues) follows the `unslop` skill, whose rule 33 forbids this style there.
 - Rewrite prose inside comments/docstrings only during comment-only work.
 - Keep project-required prefixes; compress text after prefix only.
 - Keep licenses, generated-file banners, and external spec text exact unless explicitly asked.

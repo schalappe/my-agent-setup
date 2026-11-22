@@ -1,0 +1,5 @@
+interface:
+  display_name: "Explain"
+  short_description: "Explain how or why code works, with cited evidence."
+policy:
+  allow_implicit_invocation: false
