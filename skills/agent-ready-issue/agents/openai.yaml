@@ -1,0 +1,3 @@
+interface:
+  display_name: "Agent-Ready Issue"
+  short_description: "Write issues an unattended agent can implement"

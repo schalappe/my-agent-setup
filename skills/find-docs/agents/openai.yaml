@@ -1,0 +1,3 @@
+interface:
+  display_name: "Find Docs"
+  short_description: "Current library docs via Context7"

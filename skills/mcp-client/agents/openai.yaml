@@ -1,0 +1,3 @@
+interface:
+  display_name: "MCP Client"
+  short_description: "Call a project's .mcp.json servers from the CLI"

@@ -1,0 +1,3 @@
+interface:
+  display_name: "Hardening"
+  short_description: "Harden code that handles untrusted input or secrets"

@@ -1,0 +1,3 @@
+interface:
+  display_name: "Logging Best Practices"
+  short_description: "Wide-event logging for services"

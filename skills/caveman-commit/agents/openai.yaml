@@ -1,0 +1,3 @@
+interface:
+  display_name: "Caveman Commit"
+  short_description: "Write a terse Conventional Commit message"

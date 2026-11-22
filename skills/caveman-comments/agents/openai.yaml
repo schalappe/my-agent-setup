@@ -1,0 +1,3 @@
+interface:
+  display_name: "Caveman Comments"
+  short_description: "Terse, convention-following code comments"
