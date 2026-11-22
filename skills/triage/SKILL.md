@@ -1,6 +1,6 @@
 ---
 name: triage
-description: Take a ticket from report to closed loop: check it against the code and the running app, give a verdict with evidence, scout every real ticket before any fix, and comment on every tracker involved.
+description: "Take a ticket from report to closed loop: check it against the code and the running app, give a verdict with evidence, scout every real ticket before any fix, and comment on every tracker involved."
 disable-model-invocation: true
 ---
 
