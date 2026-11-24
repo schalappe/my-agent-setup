@@ -121,7 +121,7 @@ Before running the verifier once more in the same round, archive its last run wi
 
 The verifier is the GPT-6.2 Sol peer, never an in-session subagent on the writer's model. With the brief complete in `$p/verify.brief`:
 
-- **Under T3 Code**: dispatch one `delegate_task` (`codex`, `gpt-6.2-sol`, `reasoningEffort: "high"`, `mode: "async"`, follow its `next`). Instruct it to read `~/.agents/skills/review-round/verifier.md` and `$p/verify.brief` (both absolute paths) and work only in `$wt`, running every check through `bun $gate exec $N -- '<command>'` and writing `verify-$N.json`.
+- **Under T3 Code**: dispatch one `delegate_task` (`codex`, `gpt-6.2-sol`, `reasoningEffort: "high"`, `mode: "async"`, follow its `next`). Instruct it to read `~/.agents/skills/review-round/verifier.md` and `$p/verify.brief` (both absolute paths) and work only in `$wt`, running every check through `bun $gate exec $N -- '<command>'` and writing `verify-$N.json`. Tell it these two files are its complete instructions: it must not open `review-round/SKILL.md` or any other skill. Otherwise the peer finds `review-round` in its own skill list and loads this whole procedure into its context.
 - **Outside T3 Code**: run it from `wt` in one long shell call and wait for it ([harness.md](harness.md)):
 
 ```bash
@@ -145,7 +145,7 @@ The first reviewed round covers every file. Later rounds are re-reviews: only th
 
 Run the reviewers (up to 8 in parallel), then `bun $gate reviewed $N`:
 
-- **Under T3 Code**: for each slice name `S`, dispatch a `delegate_task` (`codex`, `gpt-6.2-sol`, `reasoningEffort: "high"`, `mode: "async"`), instructing it to read and follow `$p/review-$S.prompt` in `$wt` (read-only: do not edit any file), print its whole slice with one `cat` of the bundle the prompt names (`$p/slice-<letter>.patch`), and reply with ONLY the JSON object matching `~/.agents/skills/review-round/reviewer-schema.json`. Follow their `next`. Once each finishes, call `t3_thread_read(threadId, view: "activity", afterPosition: -1, limit: 100, maxCharsPerItem: 20000)` (paginating with `afterPosition: nextPosition` while `hasMore` is true) and save the returned JSON to `$p/review-$S.jsonl` (one page per line if paginated), then run `bun $gate reviewed $N`.
+- **Under T3 Code**: for each slice name `S`, dispatch a `delegate_task` (`codex`, `gpt-6.2-sol`, `reasoningEffort: "high"`, `mode: "async"`), instructing it to read and follow `$p/review-$S.prompt` in `$wt` (read-only: do not edit any file), print its whole slice with one `cat` of the bundle the prompt names (`$p/slice-<letter>.patch`), and reply with ONLY the JSON object matching `~/.agents/skills/review-round/reviewer-schema.json`, and that the prompt file is its complete instructions: it must not open `review-round/SKILL.md` or any other skill. Follow their `next`. Once each finishes, call `t3_thread_read(threadId, view: "activity", afterPosition: -1, limit: 100, maxCharsPerItem: 20000)` (paginating with `afterPosition: nextPosition` while `hasMore` is true) and save the returned JSON to `$p/review-$S.jsonl` (one page per line if paginated), then run `bun $gate reviewed $N`.
 - **Outside T3 Code**: run the processes 8 at a time in one long shell call from `wt` and wait for it. The patches live under the main checkout's `.git`, outside `wt`, so `--add-dir "$p"` is what lets the reviewer read them:
 
 ```bash
