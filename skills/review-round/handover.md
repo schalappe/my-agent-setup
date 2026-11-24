@@ -17,7 +17,7 @@ Runs when the loop stops after `converged`. A stalled or capped loop gets here o
      - Remove the worktree `<wt>`: only for a worktree the loop did not create (`$dir/worktree-created` reads `existing`).
      - None.
    - `stop` → no question. [Land](#land) the PR up to its merge, and keep the worktree.
-   - `send` → `$dir/decisions.md` exists → a decision is open and the merge is the user's: ask the grouped question as for `ask`. Otherwise Merge is chosen without a question. The pre-existing issues stay drafted either way.
+   - `send` → `$dir/decisions.md` exists → a decision is open and the merge is the user's: ask the grouped question as for `ask`. Otherwise Merge is chosen without a question. Any untracked `known failure on base` in `$dir/pre-existing.md` (not already linked to an open `#N`) is still filed with `gh issue create` (labeled with the repo's category label plus `needs-triage`) so a failing base check never goes untracked; other pre-existing review findings stay drafted.
 5. Merge, when chosen: [Land](#land) the PR.
 6. File the issues, when chosen, with `gh issue create`.
 7. [Worktree](#worktree), when the merge did not already run it and the End is not `stop`.

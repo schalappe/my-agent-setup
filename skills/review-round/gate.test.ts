@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { baseRunRan, convergedRound, describeDiff, diffSize, type Finding, hotspots, pairKey, repeatsEarlier, resumedAfter, securityChecklist } from "./gate";
+import { baseRunRan, convergedRound, describeDiff, diffSize, extractFailedTests, failuresCoveredByBase, type Finding, hotspots, pairKey, repeatsEarlier, resumedAfter, securityChecklist } from "./gate";
 
 test("diffSize counts hand-written lines and skips generated and binary files", () => {
   const numstat = "10\t2\tsrc/a.ts\n300\t280\tbun.lock\n-\t-\tlogo.png\n5\t0\tdocs/with\ttab.md\n";
@@ -21,6 +21,31 @@ test("baseRunRan rejects a base run that stopped before the check ran", () => {
   expect(baseRunRan(prRun, unrun)).toBe(false);
   expect(baseRunRan(prRun, { ...unrun, seconds: 580 })).toBe(true);
   expect(baseRunRan(prRun, { ...unrun, seconds: undefined })).toBe(false);
+});
+
+test("failuresCoveredByBase rejects a PR regression hiding behind a base flake", () => {
+  const baseLog = [
+    "(pass) foo > ok [12.00ms]",
+    "(fail) LoanThirdPartyCosts > modifier une ligne [5001.20ms]",
+  ].join("\n");
+  const samePrLog = "(fail) LoanThirdPartyCosts > modifier une ligne [5004.80ms]\n";
+  const regressedPrLog = [
+    "(fail) LoanThirdPartyCosts > modifier une ligne [5002.10ms]",
+    "(fail) NewFeature > calculates fee [14.00ms]",
+  ].join("\n");
+  expect(failuresCoveredByBase(samePrLog, baseLog)).toEqual({ covered: true, newFailures: [] });
+  expect(failuresCoveredByBase(regressedPrLog, baseLog)).toEqual({
+    covered: false,
+    newFailures: ["NewFeature > calculates fee"],
+  });
+  expect(extractFailedTests("com.example.FooTest > handlesNull() FAILED\nFAILED tests/test_a.py::test_x\n")).toEqual(
+    new Set(["com.example.FooTest > handlesNull()", "tests/test_a.py::test_x"]),
+  );
+  // Non-test output (e.g. compiler/linter) keeps baseRunRan semantics.
+  expect(failuresCoveredByBase("error TS2345: type mismatch\n", "error TS2345: type mismatch\n")).toEqual({
+    covered: true,
+    newFailures: [],
+  });
 });
 
 test("repeatsEarlier reads kept judgments and never asks the judge for a pair it cannot repeat", async () => {

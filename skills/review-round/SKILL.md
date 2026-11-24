@@ -111,7 +111,7 @@ Then append the rest of the brief: the exact check commands (paths relative to t
 The outcome is the line `bun $gate verify $N` prints, never the agent's summary:
 
 - `green` → continue.
-- `green (known failure on base: <command>)` → each such check failed on the PR and on the merge-base alike, so the PR did not introduce it and no fixer touches it. Append each to `$dir/pre-existing.md` (the command, the merge-base sha from `$p/base`, its exec log) unless it is already there; the [hand over](handover.md) lists it. Continue.
+- `green (known failure on base: <command>)` → each such check failed on the PR and on the merge-base alike (with PR failures covered by the base run), so the PR did not introduce it and no fixer touches it. Search open issues (`gh issue list --state open --search "<failing test or command>"`) for an existing ticket. Append each to `$dir/pre-existing.md` (the command, the failing test names, the merge-base sha from `$p/base`, its exec log, and either `tracked: #<N>` if an open issue already covers it or `untracked: needs issue`) unless it is already there; the [hand over](handover.md) files untracked base-check failures and lists the rest. Continue.
 - `red` → dispatch one Opus subagent (medium) with the absolute path of `wt` to fix only what the failing checks or scenarios require, then the verifier once more. Do not review code that fails its own checks. Still red → go to step 4.
 - `blocked: base run stopped before the check ran …` → rerun only that base run with its environment ready, as [verifier.md](verifier.md#checks) says; the PR's own records stand.
 - `blocked: <reason>` → unblock it with the repo's documented local setup (nearest `AGENTS.md`), then the verifier once more. When the reason is a missing browser scenario, dispatch the verifier again with one; when it names a check without an exec record, put the gate's line in the brief. Still blocked → skip review, go to step 4. A blocked scenario is never green.
@@ -190,7 +190,7 @@ Whenever the loop stops (converged, stalled, capped, or broken), before [Decisio
 
 Whenever the loop stops (converged, stalled, capped, or broken), print `$dir/decisions.md` as one list of closed questions: each with its options, the recommendation, the default (what stays true if the user never answers), and the evidence. Missing file → print nothing.
 
-Then print `$dir/pre-existing.md`: the bugs the PR did not introduce, known failures on the base included. Draft one issue per bug with the `agent-ready-issue` skill. They are filed only when the user chooses it in the [hand over](handover.md)'s question; a loop that stops elsewhere leaves them drafted. Missing file → print nothing.
+Then print `$dir/pre-existing.md`: the bugs the PR did not introduce, known failures on the base included. Items already linked to an open `#N` (`tracked: #<N>`) are listed with that reference and never duplicated. Draft one issue per untracked bug with the `agent-ready-issue` skill. Untracked `known failure on base` checks are filed at [hand over](handover.md) even in `send` mode so a broken base check never goes untracked; other pre-existing findings are filed only when the user chooses it in the [hand over](handover.md)'s question, and a loop that stops elsewhere leaves them drafted. Missing file → print nothing.
 
 ## Measure noise
 

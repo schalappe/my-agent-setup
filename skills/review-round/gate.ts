@@ -677,9 +677,44 @@ export function baseRunRan(prRun: ExecRecord, baseRun: ExecRecord): boolean {
   return baseRun.seconds >= prRun.seconds * BASE_RUN_MIN_SHARE;
 }
 
+// Extracts test-case identifiers from common test runner failure lines (bun test, Gradle/JUnit, pytest).
+// Returns an empty set when the log is not from a recognized test runner, so non-test checks keep baseRunRan semantics.
+export function extractFailedTests(logText: string): Set<string> {
+  const failed = new Set<string>();
+  for (const raw of logText.split(/\r?\n/)) {
+    const line = raw.trim();
+    const bun = /^\(fail\)\s+(.+?)(?:\s+\[\d+(?:\.\d+)?m?s\])?$/.exec(line);
+    if (bun) {
+      failed.add(bun[1]!.trim());
+      continue;
+    }
+    const junit = /^([\w.$]+\s+>\s+.+?)\s+FAILED$/.exec(line);
+    if (junit) {
+      failed.add(junit[1]!.trim());
+      continue;
+    }
+    const pytest = /^FAILED\s+(\S+)/.exec(line);
+    if (pytest) {
+      failed.add(pytest[1]!.trim());
+    }
+  }
+  return failed;
+}
+
+// Checks whether every test failing on the PR also failed on the base run.
+// When the PR log lists no recognized test failures (e.g. a compiler or linter), returns covered=true.
+export function failuresCoveredByBase(prLog: string, baseLog: string): { covered: boolean; newFailures: string[] } {
+  const prTests = extractFailedTests(prLog);
+  if (prTests.size === 0) return { covered: true, newFailures: [] };
+  const baseTests = extractFailedTests(baseLog);
+  const newFailures = [...prTests].filter((name) => !baseTests.has(name));
+  return { covered: newFailures.length === 0, newFailures };
+}
+
 // The failing checks that fail on the merge-base too: the latest base run of the same command, at the sha
-// round-N/base holds, exited non-zero after running the check. The PR did not introduce them, so they are recorded
-// as pre-existing. A failed base run that stopped before the check ran is `unrun`: it proves nothing either way.
+// round-N/base holds, exited non-zero after running the check, and covered every named test failure on the PR.
+// The PR did not introduce them, so they are recorded as pre-existing. A failed base run that stopped before
+// the check ran is `unrun`: it proves nothing either way.
 async function knownFailures(dir: string, verify: Verify, records: Numbered[], source: number): Promise<{ known: string[]; unrun: string[] }> {
   const known: string[] = [];
   const unrun: string[] = [];
@@ -690,8 +725,17 @@ async function knownFailures(dir: string, verify: Verify, records: Numbered[], s
     const baseRun = latestFinished(records, (record) => record.base === true && record.command === check.command && record.head === baseSha);
     if (baseRun === undefined || baseRun.record.exit === 0) continue;
     const prRun = latestFinished(records, (record) => !record.base && record.command === check.command && record.tree === verify.tree);
-    if (prRun !== undefined && baseRunRan(prRun.record, baseRun.record)) known.push(check.command);
-    else unrun.push(`${check.command} (base run round-${source}/exec/${baseRun.k}.json took ${baseRun.record.seconds ?? "?"} s)`);
+    if (prRun === undefined || !baseRunRan(prRun.record, baseRun.record)) {
+      unrun.push(`${check.command} (base run round-${source}/exec/${baseRun.k}.json took ${baseRun.record.seconds ?? "?"} s)`);
+      continue;
+    }
+    const prLogFile = Bun.file(prRun.record.log);
+    const baseLogFile = Bun.file(baseRun.record.log);
+    if ((await prLogFile.exists()) && (await baseLogFile.exists())) {
+      const { covered } = failuresCoveredByBase(await prLogFile.text(), await baseLogFile.text());
+      if (!covered) continue;
+    }
+    known.push(check.command);
   }
   return { known, unrun };
 }
