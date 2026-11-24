@@ -121,7 +121,7 @@ Before running the verifier once more in the same round, archive its last run wi
 
 The verifier is the GPT-6.2 Sol peer, never an in-session subagent on the writer's model. With the brief complete in `$p/verify.brief`:
 
-- **Under T3 Code**: dispatch one `delegate_task` (`codex`, `gpt-6.2-sol`, `reasoningEffort: "high"`, `mode: "async"`, follow its `next`). Instruct it to read `~/.agents/skills/review-round/verifier.md` and `$p/verify.brief` (both absolute paths) and work only in `$wt`, running every check through `bun $gate exec $N -- '<command>'` and writing `verify-$N.json`. Tell it these two files are its complete instructions: it must not open `review-round/SKILL.md` or any other skill. Otherwise the peer finds `review-round` in its own skill list and loads this whole procedure into its context.
+- **Under T3 Code**: dispatch one `delegate_task` (`codex`, `gpt-6.2-sol`, `reasoningEffort: "high"`, `mode: "async"`, follow its `next`). Instruct it to read `~/.agents/skills/review-round/verifier.md` and `$p/verify.brief` (both absolute paths) and work only in `$wt`, running every check through `bun $gate exec $N -- '<command>'` and writing `verify-$N.json`. Tell it these two files are its complete instructions: it must not open `review-round/SKILL.md` or a skill those files do not name. Otherwise the peer finds `review-round` in its own skill list and loads this whole procedure into its context.
 - **Outside T3 Code**: run it from `wt` in one long shell call and wait for it ([harness.md](harness.md)):
 
 ```bash
