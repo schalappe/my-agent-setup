@@ -35,6 +35,23 @@ A Codex or Antigravity thread that runs these skills runs in full access. A work
 "auto-accept-edits" modes) cuts the network and forbids a nested sandbox, so `codex exec` cannot start; each peer run
 then needs an escalation. `peer.ts --check` runs the peer once and names the sandbox when it fails.
 
+## Codex `cyber_policy` refusal
+
+OpenAI's API can terminate a long `gpt-6.2-sol` run mid-turn with `codex_error_info: "cyber_policy"` (*"This content
+was flagged for possible cybersecurity risk"*), leaving `verify-N.json` unwritten. The classifier scores the
+accumulated session context, not a single command, so it typically fires late in a verifier run that replayed
+offensive-looking probes (oversized/DoS payloads, anonymous body floods, auth/CORS/upload bypass scripts).
+
+1. **Inspect before retrying:** check `$p/exec/*.json` and running processes (`ps`). Detached `gate.ts exec` checks
+   started by the aborted verifier survive the interruption and write their own exec records—wait for them to finish
+   instead of killing them or starting duplicates.
+2. **Slim the retry:** do not keep ad-hoc abuse/exploit replay scripts in the verifier's live exercise (those belong in
+   committed automated tests run through the check gates). Note in the retry brief which checks already have passing
+   `$p/exec/*.json` records on the same tree so the retry stays short.
+3. **Frame the prompt:** dispatch a fresh `gpt-6.2-sol` verifier explicitly framed as authorized verification of our
+   own application on a local, disposable test stack. If the retry hits `cyber_policy` again, stop and report it to the
+   user (model roles are fixed).
+
 ## Harness operations
 
 | Operation the skills name | Claude Code | Codex, or Gemini, under T3 Code | Codex without T3 Code |
