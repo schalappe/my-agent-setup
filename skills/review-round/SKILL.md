@@ -131,12 +131,12 @@ Run up to 8 GPT-6.2 Sol peers in parallel (fresh context, read-only), then `bun 
 
 ## 3. Fix
 
-Fix only `critical` and `major` findings where `pre_existing` is false (`minor` goes to [minor-pass.md](minor-pass.md) after convergence; `nit` goes to the human). Append `pre_existing: true` findings to `$dir/pre-existing.md` (deduped by file + title).
+Fix `critical` and `major` findings where `pre_existing` is false; the fixer may also fold in cheap, local `minor` findings in files it already edits (remaining `minor` goes to [minor-pass.md](minor-pass.md) after convergence; `nit` goes to the human). Append `pre_existing: true` findings to `$dir/pre-existing.md` (deduped by file + title).
 
 Dispatch one Opus subagent (high) with `$wt`, the PR body, merged critical/major findings, and their patch paths:
 - Pattern findings: grep and fix every instance in the repo.
 - Defects in unasked-for robustness (locks, retries, caches): prefer deleting that code over hardening it.
-- Reject a finding only with a one-sentence reason (wrong, outside diff, contradicts intent, unreachable/hypothetical, preference); for unsettled product/business rules, start the reason with `decision:` (question, recommendation, evidence). Do not commit.
+- Reject a finding only with a one-sentence reason (wrong, outside diff, contradicts intent, unreachable/hypothetical, preference). For an unsettled product/business rule or a finding contradicting an explicit ticket rule, settle it on the **first** round it appears: either reject with `decision:` (question, recommendation, evidence) so later reviewers see it in `<recorded_decisions>` instead of repeating it, or, when the ticket rule itself is insecure, replace the rule once and record that deviation in `$dir/decisions.md` rather than patching around it across rounds. Do not commit.
 
 Append every `decision:` rejection to `$dir/decisions.md` (delivered once at the end, never mid-run).
 

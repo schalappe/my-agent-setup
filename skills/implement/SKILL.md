@@ -27,7 +27,9 @@ With `send`/`stop`, the user is away: build on your recommended default and appe
 3. Run the [plan critique](../review-round/harness.md#model-roles) on the tickets, spec, and task graph unless GPT-6.2 Sol already reviewed this version. Resolve each objection before implementing.
 4. Create the worktree and branch:
    - **One ticket**: a feature branch; the implementer works on it directly.
-   - **Spec shape**: an integration branch. Each implementer uses its own branch/worktree; a merger subagent merges finished tickets into the integration branch. Open a draft PR after the first merge when the tracker uses PRs or `End` is set, referencing every closed issue.
+   - **Spec shape**:
+     - **Stacked PRs** (preferred when the spec exceeds the repo's PR size limit, e.g. ~3,000 lines, or combines migrations, engine, and UI): one branch and draft PR per ticket (or split backend/frontend if one ticket exceeds the limit), each targeting the previous branch and landing top down (`docs/agents/pr-stacks.md` when present). Pipeline **implementation** of ticket N+1 in parallel while PR N runs `review-round`; wait until PR N stabilizes shared contracts/schema before starting `review-round` on PR N+1, and check base drift before launching any container or stack build.
+     - **Integration branch** (small multi-ticket specs fitting one PR): each implementer uses its own branch/worktree; a merger subagent merges finished tickets into the integration branch. Open a draft PR after the first merge when the tracker uses PRs or `End` is set, referencing every closed issue.
 5. Dispatch one **implementer subagent** per frontier ticket (background when possible). Each implementer:
    - verifies its worktree base and resets onto it if wrong;
    - works with absolute paths under its worktree (file tools resolve relative paths against the main checkout) and runs the repo's frozen install before its first commit so hooks work;
