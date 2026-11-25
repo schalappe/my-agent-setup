@@ -24,7 +24,7 @@ With `send`/`stop`, the user is away: build on your recommended default and appe
 
 1. Read the tickets/spec and build the task graph (on GitHub: `bun ~/.agents/skills/implement/plan-graph.ts <owner/repo> <issue>...`). Record `git -C <main-checkout> status --porcelain` as baseline.
 2. *(Optional)* Dispatch an exploration subagent to save shared markdown notes outside the repo for implementers.
-3. Run the [plan critique](../review-round/harness.md#model-roles) on the tickets, spec, and task graph unless GPT-6.2 Sol already reviewed this version. Resolve each objection before implementing.
+3. Run the [plan critique](../review-round/harness.md#model-roles) on the tickets, spec, and task graph unless GPT-6.2 Sol already reviewed this version (for a single ticket, a clean Sol cold read recorded by `/scout` on this version counts; multi-ticket specs still critique the combined spec and task graph). Resolve each objection before implementing.
 4. Create the worktree and branch:
    - **One ticket**: a feature branch; the implementer works on it directly.
    - **Spec shape**:

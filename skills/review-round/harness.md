@@ -1,6 +1,6 @@
 # Model roles and harness operations
 
-Shared routing for `review-round`, `branch-review`, and `implement` across Claude Code, Codex, and T3 Code (Claude, Codex, Gemini).
+Shared routing for `review-round`, `branch-review`, `implement`, and `scout` across Claude Code, Codex, and T3 Code (Claude, Codex, Gemini).
 
 ## Model roles
 
