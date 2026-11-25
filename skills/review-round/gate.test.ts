@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { baseRunRan, convergedRound, describeDiff, diffSize, extractFailedTests, failuresCoveredByBase, type Finding, hotspots, pairKey, repeatsEarlier, resumedAfter, securityChecklist } from "./gate";
+import { baseRunRan, convergedRound, describeDiff, diffBloat, diffSize, extractFailedTests, failuresCoveredByBase, type Finding, hotspots, pairKey, postResumeDivergence, repeatsEarlier, resumedAfter, securityChecklist } from "./gate";
 
 test("diffSize counts hand-written lines and skips generated and binary files", () => {
   const numstat = "10\t2\tsrc/a.ts\n300\t280\tbun.lock\n-\t-\tlogo.png\n5\t0\tdocs/with\ttab.md\n";
@@ -41,11 +41,76 @@ test("failuresCoveredByBase rejects a PR regression hiding behind a base flake",
   expect(extractFailedTests("com.example.FooTest > handlesNull() FAILED\nFAILED tests/test_a.py::test_x\n")).toEqual(
     new Set(["com.example.FooTest > handlesNull()", "tests/test_a.py::test_x"]),
   );
-  // Non-test output (e.g. compiler/linter) keeps baseRunRan semantics.
+  // Non-test output (e.g. compiler/linter) passes only when the exact error lines also occur on base, and fails closed otherwise.
   expect(failuresCoveredByBase("error TS2345: type mismatch\n", "error TS2345: type mismatch\n")).toEqual({
     covered: true,
     newFailures: [],
   });
+  expect(failuresCoveredByBase("error TS9999: new error\n", "error TS2345: type mismatch\n")).toEqual({
+    covered: false,
+    newFailures: ["error TS9999: new error"],
+  });
+  // Gradle test-logger plugin format, non-test Gradle task failures (SpotBugs), and mechanical violations fail closed.
+  const testLoggerPr = [
+    "  org.apache.fineract.integrationtests.DelinquencyBucketsIntegrationTest",
+    "    Test testLoanClassification() FAILED",
+    "  org.apache.fineract.integrationtests.loan.LoanCurrencyMultipleIntegrationTest",
+    "    Test applicationRefusesOffMultiple() FAILED",
+    "> Task :fineract-provider:spotbugsMain FAILED",
+  ].join("\n");
+  const testLoggerBase = [
+    "  org.apache.fineract.integrationtests.DelinquencyBucketsIntegrationTest",
+    "    Test testLoanClassification() FAILED",
+  ].join("\n");
+  expect(failuresCoveredByBase(testLoggerPr, testLoggerBase)).toEqual({
+    covered: false,
+    newFailures: [
+      "org.apache.fineract.integrationtests.loan.LoanCurrencyMultipleIntegrationTest > applicationRefusesOffMultiple()",
+      "task::fineract-provider:spotbugsMain",
+    ],
+  });
+  const mechanicalPr = "mechanical: fineract-provider/src/main/java/A.java:9: Gson coerces request JSON here\n";
+  expect(failuresCoveredByBase(mechanicalPr, testLoggerBase)).toEqual({
+    covered: false,
+    newFailures: ["mechanical: fineract-provider/src/main/java/A.java:9: Gson coerces request JSON here"],
+  });
+  expect(failuresCoveredByBase("exited unexpectedly\n", testLoggerBase)).toEqual({
+    covered: false,
+    newFailures: ["(unrecognized PR failure)"],
+  });
+});
+
+test("diffBloat and postResumeDivergence stall runaway loops", () => {
+  expect(
+    diffBloat([
+      { round: "1", diff: { added: 2000, removed: 500 } },
+      { round: "2", diff: { added: 3500, removed: 600 } },
+    ]),
+  ).toEqual([{ bloat: "round-2", baseRound: "1", growth: 1600, percent: 64 }]);
+  expect(
+    diffBloat([
+      { round: "1", diff: { added: 2000, removed: 500 } },
+      { round: "2", diff: { added: 2800, removed: 500 } },
+    ]),
+  ).toEqual([]);
+  expect(
+    postResumeDivergence(
+      [
+        { round: "4", majors: [major("a.py", "A"), major("a.py", "B")] },
+        { round: "5", majors: [major("a.py", "C"), major("a.py", "D"), major("a.py", "E")] },
+      ],
+      3,
+    ),
+  ).toEqual([{ diverging: "round-5", rounds: ["4", "5"], counts: [2, 3] }]);
+  expect(
+    postResumeDivergence(
+      [
+        { round: "1", majors: [major("a.py", "A")] },
+        { round: "2", majors: [major("a.py", "B")] },
+      ],
+      0,
+    ),
+  ).toEqual([]);
 });
 
 test("repeatsEarlier reads kept judgments and never asks the judge for a pair it cannot repeat", async () => {

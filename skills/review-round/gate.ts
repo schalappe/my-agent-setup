@@ -126,8 +126,10 @@ type Round = { head: string; tree: string; majors: Finding[]; rejected?: unknown
 type Earlier = { finding: Finding; round: string; rejected: boolean };
 type Repeat = { latest: Finding; earlier: Finding; round: string; reason: string };
 export type Hotspot = { hotspot: string; rounds: string[]; titles: string[] };
-// stall.json holds the repeats or the hotspots behind a stall.
-type StallEntry = Repeat | Hotspot;
+export type Bloat = { bloat: string; baseRound: string; growth: number; percent: number };
+export type Diverging = { diverging: string; rounds: string[]; counts: number[] };
+// stall.json holds the repeats, hotspots, bloat, or divergence behind a stall.
+type StallEntry = Repeat | Hotspot | Bloat | Diverging;
 type Judgment = { same: boolean; reason: string };
 type Carry = { carried_from?: number; carried_from_attempt?: number };
 type Check = Carry & { command: string; exit: number; seconds?: number };
@@ -153,6 +155,9 @@ const SLICE_LINES = 2000;
 const UI_BRIEF_LINE = 'UI files changed: at least one passing scenario with surface "browser" is required.';
 // Green rounds in a row with a critical/major finding in one file before the loop stalls on that file.
 const HOTSPOT_ROUNDS = 3;
+// Hand-written diff growth from the baseline round (first round, or first round after resume) that stalls the loop.
+const DIFF_GROWTH_LINES = 1500;
+const DIFF_GROWTH_RATIO = 0.5;
 // The verifier's shell caps one call at 10 minutes, so one wait must end before that.
 const WAIT_MINUTES = 9;
 
@@ -677,10 +682,11 @@ export function baseRunRan(prRun: ExecRecord, baseRun: ExecRecord): boolean {
   return baseRun.seconds >= prRun.seconds * BASE_RUN_MIN_SHARE;
 }
 
-// Extracts test-case identifiers from common test runner failure lines (bun test, Gradle/JUnit, pytest).
-// Returns an empty set when the log is not from a recognized test runner, so non-test checks keep baseRunRan semantics.
+// Extracts structured failures from common test/build logs: bun test, Gradle/JUnit (standard and test-logger plugin),
+// pytest, non-test Gradle task failures (SpotBugs, Checkstyle, compile), and gates.sh mechanical violations.
 export function extractFailedTests(logText: string): Set<string> {
   const failed = new Set<string>();
+  let currentClass: string | undefined;
   for (const raw of logText.split(/\r?\n/)) {
     const line = raw.trim();
     const bun = /^\(fail\)\s+(.+?)(?:\s+\[\d+(?:\.\d+)?m?s\])?$/.exec(line);
@@ -693,49 +699,106 @@ export function extractFailedTests(logText: string): Set<string> {
       failed.add(junit[1]!.trim());
       continue;
     }
+    const classHeader = /^([a-z][\w$]*(?:\.[a-zA-Z_][\w$]*)*\.[A-Z][\w$]*)$/.exec(line);
+    if (classHeader) {
+      currentClass = classHeader[1]!;
+      continue;
+    }
+    const testLogger = /^Test\s+(.+?)\s+FAILED$/.exec(line);
+    if (testLogger && currentClass) {
+      failed.add(`${currentClass} > ${testLogger[1]!.trim()}`);
+      continue;
+    }
     const pytest = /^FAILED\s+(\S+)/.exec(line);
     if (pytest) {
       failed.add(pytest[1]!.trim());
+      continue;
+    }
+    const task = /^>\s*Task\s+(:[\w:-]+)\s+FAILED$/.exec(line);
+    if (task && !task[1]!.endsWith(":test")) {
+      failed.add(`task:${task[1]!}`);
+      continue;
+    }
+    if (line.startsWith("mechanical:") && line !== "mechanical: ok") {
+      failed.add(line);
     }
   }
   return failed;
 }
 
-// Checks whether every test failing on the PR also failed on the base run.
-// When the PR log lists no recognized test failures (e.g. a compiler or linter), returns covered=true.
+const ERROR_LINE = /\b(?:error|exception|failed)\b/i;
+
+function extractErrorLines(logText: string): Set<string> {
+  const errors = new Set<string>();
+  for (const raw of logText.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line && ERROR_LINE.test(line)) errors.add(line);
+  }
+  return errors;
+}
+
+// Checks whether every failure in prLog is covered by baseLog (or combined base logs).
+// Fail-closed: if no structured failure is recognized in prLog, non-test error lines must match baseLog; an empty or
+// unrecognized failure is never treated as known on base.
 export function failuresCoveredByBase(prLog: string, baseLog: string): { covered: boolean; newFailures: string[] } {
-  const prTests = extractFailedTests(prLog);
-  if (prTests.size === 0) return { covered: true, newFailures: [] };
-  const baseTests = extractFailedTests(baseLog);
-  const newFailures = [...prTests].filter((name) => !baseTests.has(name));
+  const prFailures = extractFailedTests(prLog);
+  const baseFailures = extractFailedTests(baseLog);
+  if (prFailures.size > 0) {
+    const newFailures = [...prFailures].filter((name) => !baseFailures.has(name));
+    return { covered: newFailures.length === 0, newFailures };
+  }
+  if (baseFailures.size > 0) return { covered: false, newFailures: ["(unrecognized PR failure)"] };
+  const prErrors = extractErrorLines(prLog);
+  if (prErrors.size === 0) return { covered: false, newFailures: ["(unrecognized PR failure)"] };
+  const baseErrors = extractErrorLines(baseLog);
+  const newFailures = [...prErrors].filter((line) => !baseErrors.has(line));
   return { covered: newFailures.length === 0, newFailures };
 }
 
-// The failing checks that fail on the merge-base too: the latest base run of the same command, at the sha
-// round-N/base holds, exited non-zero after running the check, and covered every named test failure on the PR.
-// The PR did not introduce them, so they are recorded as pre-existing. A failed base run that stopped before
-// the check ran is `unrun`: it proves nothing either way.
+// Collects all finished failing --base exec records on `baseSha` across the current and earlier rounds of `dir`, so
+// targeted base runs and prior rounds on the same merge-base can prove base failures without redundant full base runs.
+async function baseLogsOnSha(dir: string, baseSha: string): Promise<string[]> {
+  const logs: string[] = [];
+  if (!existsSync(dir)) return logs;
+  for (const entry of readdirSync(dir)) {
+    const match = /^round-(\d+)$/.exec(entry);
+    if (!match) continue;
+    const records = await readExecRecords(dir, Number(match[1]));
+    for (const { record } of records) {
+      if (record.base === true && record.head === baseSha && record.exit !== undefined && record.exit !== 0) {
+        const file = Bun.file(record.log);
+        if (await file.exists()) logs.push(await file.text());
+      }
+    }
+  }
+  return logs;
+}
+
+// The failing checks that fail on the merge-base too: every failure extracted from the PR run is covered by failing
+// `--base` runs at `round-N/base` (either the full command's base run after passing baseRunRan, or targeted/cached
+// base runs on the exact same merge-base sha). Non-test failures (task:, mechanical:) are never excused by a test-only
+// base run, and a base run of the full command that stopped early is reported as `unrun`.
 async function knownFailures(dir: string, verify: Verify, records: Numbered[], source: number): Promise<{ known: string[]; unrun: string[] }> {
   const known: string[] = [];
   const unrun: string[] = [];
   const baseFile = Bun.file(`${dir}/round-${source}/base`);
   if (!(await baseFile.exists())) return { known, unrun };
   const baseSha = (await baseFile.text()).trim();
+  const cachedBaseLogs = await baseLogsOnSha(dir, baseSha);
   for (const check of verify.checks.filter((entry) => entry.exit !== 0 && !isCarried(entry))) {
-    const baseRun = latestFinished(records, (record) => record.base === true && record.command === check.command && record.head === baseSha);
-    if (baseRun === undefined || baseRun.record.exit === 0) continue;
     const prRun = latestFinished(records, (record) => !record.base && record.command === check.command && record.tree === verify.tree);
-    if (prRun === undefined || !baseRunRan(prRun.record, baseRun.record)) {
+    if (prRun === undefined) continue;
+    const prLogFile = Bun.file(prRun.record.log);
+    if (!(await prLogFile.exists())) continue;
+    const prLog = await prLogFile.text();
+    const baseRun = latestFinished(records, (record) => record.base === true && record.command === check.command && record.head === baseSha);
+    if (baseRun !== undefined && baseRun.record.exit !== 0 && !baseRunRan(prRun.record, baseRun.record)) {
       unrun.push(`${check.command} (base run round-${source}/exec/${baseRun.k}.json took ${baseRun.record.seconds ?? "?"} s)`);
       continue;
     }
-    const prLogFile = Bun.file(prRun.record.log);
-    const baseLogFile = Bun.file(baseRun.record.log);
-    if ((await prLogFile.exists()) && (await baseLogFile.exists())) {
-      const { covered } = failuresCoveredByBase(await prLogFile.text(), await baseLogFile.text());
-      if (!covered) continue;
-    }
-    known.push(check.command);
+    if (cachedBaseLogs.length === 0) continue;
+    const { covered } = failuresCoveredByBase(prLog, cachedBaseLogs.join("\n"));
+    if (covered) known.push(check.command);
   }
   return { known, unrun };
 }
@@ -1068,7 +1131,7 @@ async function record(round: string, fixPath: string | undefined): Promise<strin
   return `Round ${round}: verify=${describeOutcome(outcome)} findings=${body.findings} major=${body.majors.length} fixed=${body.fixed} rejected=${body.rejected.length} minor=${body.minor.length} pre-existing=${body.pre_existing.length} diff=${describeDiff(diff, first)}`;
 }
 
-type CheckedRound = Round & { name: string; verify: Outcome["result"] };
+type CheckedRound = Round & { name: string; verify: Outcome["result"]; diff?: DiffSize };
 
 const roundNumber = (round: { name: string }): string => round.name.slice("round-".length, -".json".length);
 
@@ -1094,6 +1157,33 @@ export function hotspots(rounds: { round: string; majors: Finding[] }[], k = HOT
       rounds: window.map((round) => round.round),
       titles: window.flatMap((round) => round.majors.filter((finding) => finding.file === file).map((finding) => finding.title)),
     }));
+}
+
+// Diff bloat since the baseline green round (first green round, or first green round after resume):
+// stalls when hand-written diff grew by at least DIFF_GROWTH_LINES and DIFF_GROWTH_RATIO.
+export function diffBloat(rounds: { round: string; diff?: DiffSize }[]): Bloat[] {
+  const measured = rounds.filter((r): r is { round: string; diff: DiffSize } => isDiffSize(r.diff));
+  if (measured.length < 2) return [];
+  const first = measured[0]!;
+  const latest = measured.at(-1)!;
+  const firstTotal = first.diff.added + first.diff.removed;
+  const latestTotal = latest.diff.added + latest.diff.removed;
+  const growth = latestTotal - firstTotal;
+  if (growth < DIFF_GROWTH_LINES) return [];
+  const ratio = firstTotal > 0 ? growth / firstTotal : 1;
+  if (ratio < DIFF_GROWTH_RATIO) return [];
+  return [{ bloat: `round-${latest.round}`, baseRound: first.round, growth, percent: Math.round(ratio * 100) }];
+}
+
+// Post-resume divergence: after a resume, two consecutive green rounds whose major counts do not decrease.
+export function postResumeDivergence(rounds: { round: string; majors: Finding[] }[], resumedFrom: number): Diverging[] {
+  if (resumedFrom <= 0 || rounds.length < 2) return [];
+  const prev = rounds.at(-2)!;
+  const curr = rounds.at(-1)!;
+  if (prev.majors.length > 0 && curr.majors.length >= prev.majors.length) {
+    return [{ diverging: `round-${curr.round}`, rounds: [prev.round, curr.round], counts: [prev.majors.length, curr.majors.length] }];
+  }
+  return [];
 }
 
 // The latest round a `resume` let go on from, 0 when the loop never resumed. A stalls/<n>/ without the round file
@@ -1175,8 +1265,15 @@ async function verdict(): Promise<Verdict> {
   const resumedFrom = resumedAfter(dir);
   const sinceResume = green
     .filter((round) => Number(roundNumber(round)) > resumedFrom)
-    .map((round) => ({ round: roundNumber(round), majors: round.majors }));
-  const stall: StallEntry[] = repeats.length > 0 ? repeats : hotspots(sinceResume);
+    .map((round) => ({ round: roundNumber(round), majors: round.majors, diff: round.diff }));
+  const stall: StallEntry[] =
+    repeats.length > 0
+      ? repeats
+      : hotspots(sinceResume).length > 0
+        ? hotspots(sinceResume)
+        : postResumeDivergence(sinceResume, resumedFrom).length > 0
+          ? postResumeDivergence(sinceResume, resumedFrom)
+          : diffBloat(sinceResume);
   if (stall.length === 0) return {};
   await Bun.write(`${dir}/stall.json`, `${JSON.stringify(stall, null, 2)}\n`);
   await Bun.write(`${dir}/status`, `stalled ${current}\n`);
@@ -1291,6 +1388,10 @@ async function printStall(): Promise<void> {
   const entries = (await file.json()) as StallEntry[];
   for (const entry of entries) {
     if ("hotspot" in entry) console.log(`  hotspot: ${entry.hotspot}: critical or major findings in rounds ${entry.rounds.join(", ")}`);
+    else if ("bloat" in entry)
+      console.log(`  bloat: diff grew by +${entry.growth} lines (+${entry.percent}%) since round ${entry.baseRound}`);
+    else if ("diverging" in entry)
+      console.log(`  diverging: major findings did not decrease after resume (rounds ${entry.rounds[0]}: ${entry.counts[0]}, ${entry.rounds[1]}: ${entry.counts[1]})`);
     else
       console.log(`  repeat: ${entry.latest.file}: ${entry.latest.title} ≈ round ${entry.round}: ${entry.earlier.title}${entry.reason ? ` (${entry.reason})` : ""}`);
   }

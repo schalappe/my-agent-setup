@@ -4,79 +4,55 @@ description: "Use when the user wants one ticket, or a spec and its tickets, imp
 disable-model-invocation: true
 ---
 
-Implement the work the user names: one ticket, or a spec whose tickets form a **task graph** (tickets with blocking relationships, so a **frontier** of unblocked tickets is always ready). One ticket is a graph of one node. The arguments are a list of issues: each parent (a spec or a lot) stands for all its open sub-issues at every depth, a closed ticket counts as done, and the union of the list is the work. There is no exclusion syntax; to leave a ticket out, list the others. Two or more tickets take the spec shape. A last word `send` or `stop` is the End of `review-round`: the work then continues past the PR, through the review loop, to a PR ready to merge (`stop`) or merged (`send`), so the draft PR of step 4 is opened whatever the tracker. Only the user's invocation sets it. Fetch each reference from the issue tracker and state its title before starting; if a reference is ambiguous, ask. The issue tracker should have been provided to you. If not, tell the user to run `/setup-repo`.
+Implement the named issue(s): one ticket, or a spec forming a **task graph** (blocking edges give a ready **frontier**). Each parent stands for all its open sub-issues at every depth; closed issues count as done; two or more open tickets use the **spec shape**.
 
-## The main agent is the conductor
+A trailing `send` or `stop` sets the `End` of `review-round`: continue past the draft PR through the review loop until ready to merge (`stop`) or merged (`send`), opening the draft PR at step 4 regardless of tracker. Only the user's invocation sets `End`. Fetch each reference and state its title before starting; ask if ambiguous. If no issue tracker is configured, tell the user to run `/setup-repo`.
 
-The main agent owns scope, decisions, and acceptance. It reads the tickets, the spec, the `AGENTS.md` of each project the work touches, and the diffs its subagents return. Exploration and code go to subagents, so the main context keeps every decision of the conversation intact.
+## Main is the conductor
 
-Subagents report open questions instead of guessing a product or business rule. The main agent answers from the tickets, the docs, and the conversation, asks the user with the ask tool when the decision is the user's (with an End, [it waits for the end](#decisions-with-an-end)), and lets the subagent continue with the answer (`SendMessage` in Claude Code).
+Main owns scope, decisions, and acceptance: read the tickets, spec, touched projects' `AGENTS.md`, and returned diffs. Delegate exploration and code to subagents and communicate via **context pointers** (specs, tickets, notes files, commits), never restated prose.
 
-At the end the main agent **harmonises**: it compares what each subagent did with what was asked and decided. Any gap is the main agent's to close, by sending the work back with the precise difference or by correcting it itself, until the result matches.
+Subagents report open product/business questions instead of guessing. Main answers from tickets, docs, or conversation, asks the user when it is their call (with an `End`, see [Decisions with an End](#decisions-with-an-end)), and resumes the subagent with the answer. At the end, Main **harmonises** what was built against what was asked and decided, closing every gap until they match.
+
+Model roles and harness mapping are fixed: see [harness.md](../review-round/harness.md#model-roles) (Opus 5.5 writes/merges/fixes; GPT-6.2 Sol critiques, reviews, verifies).
 
 ### Decisions with an End
 
-With an End the user is away, so a decision that is theirs waits for the end of the run. The main agent takes its recommended option, has the work built on it, and appends the decision to `$dir/decisions.md`, with `dir=$(git rev-parse --path-format=absolute --git-common-dir)/review/<branch>` for the feature or integration branch: the question, its options, the recommendation, the default it built on, and the evidence. `review-round` prints that file at its end, and `send` asks before it merges while the file exists.
-
-Ask now, through the ask tool, only when building on a default is unsafe: the choice spends money, changes security or a public interface, deletes data, needs a migration a later answer could not undo, or the goal itself is ambiguous.
-
-Communicate through **context pointers** (the spec, tickets, notes files, commits), not restated content.
-
-It runs in Claude Code, in Codex, or under T3 Code (Claude, Codex, or Gemini): [harness.md](../review-round/harness.md) maps the subagent, skill, and ask operations named here to each one. The roles are fixed ([model roles](../review-round/harness.md#model-roles)): every implementer, merger, and fixer is an Opus 5.5 subagent, and every review and verification is a GPT-6.2 Sol peer run.
+With `send`/`stop`, the user is away: build on your recommended default and append the question, options, recommendation, default, and evidence to `$dir/decisions.md` (`dir=$(git rev-parse --path-format=absolute --git-common-dir)/review/<branch>`). `review-round` prints it at the end, and `send` asks before merging while it exists. Ask immediately only when a default is unsafe (spends money, changes security or public interface, deletes data, irreversible migration, or ambiguous goal).
 
 ## Steps
 
-1. Read the tickets and the spec, and draw the task graph. On GitHub, `bun ~/.agents/skills/implement/plan-graph.ts <owner/repo> <issue>...` prints it: the open tickets with their wave, size, readiness, and native blockers. Record `git -C <main-checkout> status --porcelain` as the user's baseline.
+1. Read the tickets/spec and build the task graph (on GitHub: `bun ~/.agents/skills/implement/plan-graph.ts <owner/repo> <issue>...`). Record `git -C <main-checkout> status --porcelain` as baseline.
+2. *(Optional)* Dispatch an exploration subagent to save shared markdown notes outside the repo for implementers.
+3. Run the [plan critique](../review-round/harness.md#model-roles) on the tickets, spec, and task graph unless GPT-6.2 Sol already reviewed this version. Resolve each objection before implementing.
+4. Create the worktree and branch:
+   - **One ticket**: a feature branch; the implementer works on it directly.
+   - **Spec shape**: an integration branch. Each implementer uses its own branch/worktree; a merger subagent merges finished tickets into the integration branch. Open a draft PR after the first merge when the tracker uses PRs or `End` is set, referencing every closed issue.
+5. Dispatch one **implementer subagent** per frontier ticket (background when possible). Each implementer:
+   - verifies its worktree base and resets onto it if wrong;
+   - works with absolute paths under its worktree (file tools resolve relative paths against the main checkout) and runs the repo's frozen install before its first commit so hooks work;
+   - builds via `tdd`, typechecking each slice, runs static checks (lint, formatter, static analysis per `AGENTS.md`) on every changed module, and satisfies the repo's review checklist before reporting done;
+   - fixes defects on touched paths and small local adjacent ones, reporting anything needing a product decision;
+   - on the spec shape, merges the integration branch tip into its branch before reporting done.
 
-2. (optional) Dispatch an **exploration subagent** for the files and external docs the tickets need. It saves markdown notes to a directory outside the repo that every later subagent can read, so implementers spend their context on implementation.
+   After each wave, re-check `git -C <main-checkout> status --porcelain`; move any stray edit not in baseline into its owning worktree and restore the main checkout.
+6. *(Spec shape)* Merge each finished ticket with a merger subagent, then dispatch newly unblocked frontier tickets.
+7. *(Only without an `End`)* Run `branch-review` on the branch. Ask the user on doubtful/partial/product findings; fix the rest in one implementer subagent, then re-run `branch-review` once on the fix commits alone and fix what it finds. With an `End`, skip this step (`review-round` round 1 is the first review).
+8. **Harmonise** against tickets, spec, decisions, and (if step 7 ran) review findings. Fix small adjacent findings subagents only reported.
+9. **Final verification (`round 0`)** on the settled tree (including doc/skill edits), using `gate=~/.agents/skills/review-round/gate.ts` from the branch worktree:
+   - Check [Land](../review-round/handover.md#land) step 1's base listing and merge the base first if any touched file moved on base.
+   - Run `bun $gate prepare 0 --base <base>` and `bun $gate brief 0`, then build the brief and launch/clean up any `verify-<app>` stack per `review-round`'s [Verify](../review-round/SKILL.md#1-verify) and [Verifier](../review-round/SKILL.md#verifier) rules (include a progress file for multi-minute runs; keep unreachable states out of `verify-0.json` and list them as `not verified` in the hand-off table so `review-round` can reuse `verify-0.json`).
+   - Loop until `bun $gate verify 0` prints `green` (or `green (known failure on base: …)`) and `verify-0.json`'s `tree` equals `bun $gate tree`. Before any rerun, archive with `bun $gate attempt 0`, re-run `prepare 0` (if code changed) and `brief 0`.
+10. Commit to the branch. Rewrite any draft PR body with the `pr` skill (scope, non-goals, ticket rules/amounts/states/refusals, preserving `Closes #…` lines) because `review-round` hands it to reviewers as the intent. Keep the PR in draft—only `review-round` marks it ready. Without a PR, resolve tickets per the tracker and report the branch.
+11. Remove per-ticket subagent worktrees; keep the feature/integration worktree for `review-round`.
+12. With an `End`, run `review-round` with `#<PR> <End>` in this turn once step 9 is green on the committed tree. Its reviewers see `decisions.md` as recorded open decisions. Place the acceptance table below in the final loop message, reading each row's revision/status from the `verify-N.json` matching the delivered `tree`.
 
-3. Before implementation, run the [plan critique](../review-round/harness.md#model-roles) on the tickets, spec, and task graph unless GPT-6.2 Sol already reviewed this version. Resolve each objection before dispatching an implementer.
+## Hand-off acceptance table
 
-4. Create the branch, in its own worktree:
-   - **One ticket**: a feature branch. The implementer works on it directly.
-   - **A spec**: an **integration branch**. Each implementer works on its own branch in its own worktree, and a **merger subagent** merges each finished ticket into the integration branch. If the issue tracker closes work through PRs, or the user asks for one, open a draft PR after the first merge (a branch with no commits ahead of the base can't open one), marked as closing the spec and tickets.
+End with a markdown table—one row per acceptance criterion: `criterion | revision | command | result counts | status` (verbatim verifier status: `pass`, `blocked`, `bypassed prerequisite`, or `not verified`).
 
-5. Dispatch **implementer subagents**, in the background where possible, one per frontier ticket. Each one:
-   - confirms its worktree is based on the right branch before starting, and resets onto it if not;
-   - runs the `tdd` skill to build the ticket, and runs the repo's typecheck after each slice;
-   - runs the repo's static checks (lint, formatter, static analysis, as its `AGENTS.md` names them) on every changed module before reporting done, so a lint failure never reaches the verifier;
-   - follows the repo's review checklist (named in `AGENTS.md`, a PR template, or a standards file), so its test requirements are met before review rather than found by it;
-   - fixes defects it finds on the paths the ticket touches, and small adjacent ones whose fix is local and verifiable, and reports any that needs a product decision;
-   - on the spec shape, merges the integration branch tip into its own branch before reporting done.
-
-   Every subagent that works in a worktree (implementer, merger, fixer):
-   - gets the worktree's absolute path and uses absolute paths under it for every file tool. File tools resolve relative paths against the main checkout, not the shell's cwd, so a relative edit lands in the wrong tree;
-   - installs dependencies in the worktree before its first commit (the repo's frozen install, e.g. `bun install --frozen-lockfile`): git hooks run from the worktree and fail without its `node_modules`.
-
-   After every wave, rerun `git -C <main-checkout> status --porcelain`. Any entry not in the baseline is a stray edit: stop the wave, move that change into the worktree that owns it, and restore the main checkout's file. Shared `.git` metadata written from a worktree (refs, gate evidence) is expected.
-
-6. On the spec shape, merge each finished ticket with a merger subagent. When that changes the frontier, dispatch implementers for the new tickets.
-
-7. Review, only without an End. With an End, skip this step: `review-round`'s first round is the first review, of every file behind its gate, and an ungated review of the same code before it only delays that round. Without an End, run the `branch-review` skill on the branch. A finding that is doubtful, partial, or a product decision goes to the user now, through the ask tool, before final verification. Fix the rest in one implementer subagent, then review the fix commits alone with `branch-review` once (fixed point: the commit before the fixes), since a fix can trade one finding for a regression, and fix what it finds; any further review is the user's `/review-round`. Its reviewers are GPT-6.2 Sol peers ([harness.md](../review-round/harness.md#model-roles)); an in-session reviewer would be the writer reviewing itself.
-
-8. Harmonise (see above) against the tickets, the spec, the conversation's decisions, and the review when step 7 ran. Fix the small adjacent findings that subagents only reported instead of handing them on.
-
-9. Run the **verifier** for the repo's per-ticket gates, as its `AGENTS.md` defines them, once, on the final revision. Final means every edit is in, docs and skill notes included: a change after this step changes the code identity, so the review loop verifies everything again. Below, `gate=~/.agents/skills/review-round/gate.ts`, run from the branch's worktree.
-   - **Who.** The GPT-6.2 Sol peer, run via `review-round`'s [Verifier](../review-round/SKILL.md#verifier) route (T3 `delegate_task`, or `peer.ts` outside T3), never an in-session subagent on the writer's model. Outside T3 Code, check `bun ~/.agents/skills/review-round/peer.ts --check` first.
-   - **Base first.** Before it starts, run `review-round`'s base listing ([Land](../review-round/handover.md#land) step 1) and merge the base first when it lists a file, so the run covers code the base has not already changed.
-   - **Prepare.** Then `bun $gate prepare 0 --base <base>` (the PR's base branch): it writes `round-0/files.txt` and `round-0/base`, so the brief names the merge-base for base runs and the gate knows when the diff changes UI files.
-   - **Brief.** It starts with what `bun $gate brief 0` prints: the paths, including `verify-0.json`, the line `UI files changed: at least one passing scenario with surface "browser" is required.` when the diff touches a hand-written UI file (then the brief includes at least one browser scenario), and the rule that every check runs through `gate.ts exec 0`, so the exec records that prove each exit code land in `round-0/`, where the loop looks for them when it reuses the file. It sets a setup deadline and asks for a report on the first blocker instead of working around it. It carries `review-round`'s isolation rule ([Verify](../review-round/SKILL.md#1-verify) step 3), since other sessions may run servers at the same time.
-   - **Stack.** When the repo has a `verify-<app>` skill, the main agent launches the stack before the run and runs its Cleanup after, under `review-round`'s Stack rule ([Verify](../review-round/SKILL.md#1-verify) step 4); the verifier only drives it. `review-round` reuses this verification for its first round, so it never needs this stack.
-   - **Progress.** For runs longer than a few minutes the verifier writes a progress file (stage, elapsed time, result counts so far). Run scripts meant for reuse take the worktree path as an argument.
-   - **Result.** The verifier writes `verify-0.json`, where `review-round` reuses it, so the loop's first round skips a second full verification of the same code. The file follows the contract of `review-round`'s [verifier.md](../review-round/verifier.md#verify-file): every check with its exit, every browser, API, or CLI scenario with `pass`, `fail`, or `blocked` and its `surface`. A state the app cannot produce after one realistic attempt stays out of the file and goes in the hand-off table as `not verified`, with what was tried: a `blocked` entry stops the review loop from reusing the file.
-   - **Rerun.** Before a rerun on the same revision, `gate.ts attempt 0` archives the file, and the next `brief 0` carries what already passed.
-   - **Green.** The step ends when `bun $gate verify 0` prints `green` (or `green (known failure on base: …)`) and the `tree` of `verify-0.json` equals `bun $gate tree`: the file proves the code step 10 commits. A fix that lands after the run changes the tree: `bun $gate attempt 0`, `prepare 0`, `brief 0`, and run the verifier again. `review-round` never starts on a red, blocked, or stale `verify-0.json`.
-
-10. Commit to the branch. If a draft PR exists, rewrite its body with the `pr` skill: the scope, the non-goals, and the ticket rules the code must hold (amounts, states, refusals, each with its ticket). `review-round` hands that body to every reviewer as the intent, so a draft stub leaves round 1 judging against nothing. The rewrite keeps the issue-closing references the draft opened with at step 4 (`Closes #<spec>`, `Closes #<ticket>`, …), so merging the PR still closes the spec and its tickets. Keep the PR in draft — only `review-round` marks it ready once the loop converges; if no PR is used, resolve each ticket the way the issue tracker closes work and report the branch. With a PR and no End, the next step is the user's `/review-round #<PR>`: it reuses the branch's worktree.
-
-11. Remove the per-ticket subagent worktrees. Keep the worktree of the feature or integration branch: `review-round` runs in it, and offers to remove it once the PR is ready.
-
-12. An End was given → run the `review-round` skill with `#<PR> <End>` in this turn, once step 9 ended green on the committed tree. Its reviewers read `decisions.md` as recorded decisions, still open for the user, so they do not report a default the run built on, or a finding it deferred, unless it breaks a hard invariant. The acceptance table then goes in the message that ends the loop, with each row's revision and status read from the `verify-N.json` whose `tree` is the delivered code's (not always the last one: a reverted minor pass or a closing verification moves it).
-
-Hand off with an acceptance table in the run's last message: a markdown table, one row per acceptance criterion of the ticket, with the columns `criterion | revision | command | result counts | status`. Copy the status verbatim from the verifier: `pass`, `blocked`, `bypassed prerequisite`, or `not verified`. The hand-off is done when every criterion has its row; a paragraph that sums up the verification is not the table.
-
-- Synthetic interactions (scripted events, mocks, injected state) are never reported as physical ones.
-- Baseline attribution ("not new", "also fails on develop") is `unproven` until reproduced on the base revision.
-- A required full run is satisfied only by one passing full invocation, not by pieced-together partial runs.
-- A defect found and not fixed names why (redesign, product decision, contract change) and links its drafted issue.
-- Unresolved assumptions: none, or each one already asked through the ask tool or, with an End, recorded in `decisions.md`.
+- Report synthetic interactions as synthetic, never physical.
+- Mark baseline attribution `unproven` until reproduced on the base revision.
+- A required full run needs one passing full invocation, not pieced-together partial runs.
+- Unfixed defects state why (redesign, product decision, contract change) and link a drafted issue.
+- List unresolved assumptions (or `none` if all are asked or in `decisions.md`).

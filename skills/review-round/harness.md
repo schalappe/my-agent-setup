@@ -1,72 +1,43 @@
 # Model roles and harness operations
 
-`review-round`, `branch-review`, and `implement` run in Claude Code, in Codex, or under T3 Code, which runs Claude,
-Codex, or Gemini (Antigravity) and adds tools of its own.
+Shared routing for `review-round`, `branch-review`, and `implement` across Claude Code, Codex, and T3 Code (Claude, Codex, Gemini).
 
 ## Model roles
 
-The roles are fixed. They never depend on which harness or session runs a skill:
+Roles are fixed regardless of harness or who wrote the code (human included). Set every non-orchestrator model explicitly at the call—never rely on the session default or skill frontmatter (frontmatter `model`/`effort` applies only in Claude Code).
 
-| Role | Model | How |
+| Role | Model | Route |
 |---|---|---|
-| All code: implementers, fixers, mergers | Claude Opus 5.5 | Opus subagent (below) |
-| Plan critique, review, verification | GPT-6.2 Sol | T3 `delegate_task` (`codex`, `gpt-6.2-sol`), or `peer.ts` outside T3 |
-| Same-defect judgment | GPT-6.2 Sol | headless `peer.ts`, called inside `gate.ts` |
-| Verdicts (green, converged, stalled, ready) | none | `gate.ts`, deterministic code over the recorded files |
+| Implementers, fixers, mergers | Claude Opus 5.5 | Opus subagent (table below); orchestration never edits code directly |
+| Plan critique, review, verification | GPT-6.2 Sol (`reasoningEffort: "high"`) | Under T3 Code: `delegate_task` (`providerInstanceId: "codex"`, `model: "gpt-6.2-sol"`, `mode: "async"`, follow `next`). Outside T3: `bun ~/.agents/skills/review-round/peer.ts` |
+| Same-defect judgment | GPT-6.2 Sol | Headless `peer.ts` invoked by `gate.ts` (cached in `same-defect.json`) |
+| Verdicts (`green`, `converged`, `stalled`, `ready`) | Deterministic | `gate.ts` over recorded files |
 
-- **GPT-6.2 Sol peer** (plan critic, verifier, reviewers): under T3 Code (Claude, Codex, or Gemini), call
-  `orchestrator_capabilities` once per thread, then `delegate_task` with
-  `target: { providerInstanceId: "codex", model: "gpt-6.2-sol", options: { reasoningEffort: "high" } }`,
-  `mode: "async"`, and follow its `next`. Outside T3 Code, run headless `codex exec` through `peer.ts`. `trace.ts`
-  reads both `t3_thread_read(view: "activity")` dumps and `peer.ts` JSONL traces, so `gate.ts` proves which files each
-  reviewer opened under either route. The peer is always GPT-6.2 Sol whoever wrote the code, including a human.
-- **Plan critique**: before a plan, spec, or ticket set goes to implementation, write it to a file and dispatch a
-  read-only GPT-6.2 Sol peer (no code edits) with the plan file path, asking for gaps, risks, and wrong assumptions.
-  Outside T3 Code, run `bun ~/.agents/skills/review-round/peer.ts --access read --trace <dir>/critique.jsonl < <plan file>`.
-  The planner answers each point or revises the plan.
-- **Opus subagents** write every change. The session never edits code itself in these skills.
-- **The gate** turns observed results into verdicts. GPT-6.2 Sol only answers one narrow question for it (are two
-  findings the same defect?), and the gate keeps each answer in `same-defect.json`, so its verdict over the same files
-  never changes.
+- Call `orchestrator_capabilities` once per T3 thread before the first `delegate_task`. `trace.ts` parses both `t3_thread_read(view: "activity")` dumps and `peer.ts` JSONL traces.
+- **Plan critique**: write the plan/spec/tickets to a file and dispatch a read-only GPT-6.2 Sol peer asking for gaps, risks, and wrong assumptions (outside T3: `bun ~/.agents/skills/review-round/peer.ts --access read --trace <dir>/critique.jsonl < <plan>`). Resolve every objection before implementing.
 
 ## Codex and Antigravity sandbox
 
-A Codex or Antigravity thread that runs these skills runs in full access. A workspace sandbox (T3 Code's "auto" and
-"auto-accept-edits" modes) cuts the network and forbids a nested sandbox, so `codex exec` cannot start; each peer run
-then needs an escalation. `peer.ts --check` runs the peer once and names the sandbox when it fails.
+A Codex or Antigravity thread running these skills needs full access: workspace sandboxes ("auto", "auto-accept-edits") cut network and block nested sandboxes, stopping `codex exec`. `peer.ts --check` catches this at preflight.
 
 ## Codex `cyber_policy` refusal
 
-OpenAI's API can terminate a long `gpt-6.2-sol` run mid-turn with `codex_error_info: "cyber_policy"` (*"This content
-was flagged for possible cybersecurity risk"*), leaving `verify-N.json` unwritten. The classifier scores the
-accumulated session context, not a single command, so it typically fires late in a verifier run that replayed
-offensive-looking probes (oversized/DoS payloads, anonymous body floods, auth/CORS/upload bypass scripts).
+Long `gpt-6.2-sol` runs can terminate mid-turn with `codex_error_info: "cyber_policy"`, leaving `verify-N.json` unwritten. The classifier scores accumulated context, typically after offensive-looking probes (oversized/DoS payloads, anonymous floods, auth/CORS/upload bypass scripts).
 
-1. **Inspect before retrying:** check `$p/exec/*.json` and running processes (`ps`). Detached `gate.ts exec` checks
-   started by the aborted verifier survive the interruption and write their own exec records—wait for them to finish
-   instead of killing them or starting duplicates.
-2. **Slim the retry:** do not keep ad-hoc abuse/exploit replay scripts in the verifier's live exercise (those belong in
-   committed automated tests run through the check gates). Note in the retry brief which checks already have passing
-   `$p/exec/*.json` records on the same tree so the retry stays short.
-3. **Frame the prompt:** dispatch a fresh `gpt-6.2-sol` verifier explicitly framed as authorized verification of our
-   own application on a local, disposable test stack. If the retry hits `cyber_policy` again, stop and report it to the
-   user (model roles are fixed).
+1. **Inspect first**: check `$p/exec/*.json` and `ps`. Detached `gate.ts exec` processes survive the abort—wait for them instead of killing or duplicating them.
+2. **Slim the retry**: move abuse/exploit probes into committed tests run through `gate.ts exec`, and list already-passing `$p/exec/*.json` records in the retry brief.
+3. **Frame the prompt**: dispatch a fresh `gpt-6.2-sol` verifier framed as authorized verification of our own app on a local disposable test stack. If it hits `cyber_policy` again, stop and report to the user (roles stay fixed).
 
 ## Harness operations
 
-| Operation the skills name | Claude Code | Codex, or Gemini, under T3 Code | Codex without T3 Code |
+| Operation | Claude Code | Codex / Gemini under T3 Code | Codex outside T3 Code |
 |---|---|---|---|
-| Opus subagent at a set effort | Agent tool, `model: "opus"` and `effort` | `delegate_task` to the Claude provider, model `claude-opus-5-5`, `effort` in `target.options`; follow its `next` | no route: stop at preflight and say so |
-| GPT-6.2 Sol peer (plan critique, review, verify) | under T3 Code: `delegate_task` to `codex`, model `gpt-6.2-sol`, `reasoningEffort: "high"` in `target.options`, `mode: "async"`; outside T3: `bun ~/.agents/skills/review-round/peer.ts` | `delegate_task` to `codex`, model `gpt-6.2-sol`, `reasoningEffort: "high"` in `target.options`, `mode: "async"`; follow its `next` | `bun ~/.agents/skills/review-round/peer.ts` |
-| Answer a subagent's question and let it continue | `SendMessage` | follow the delegate's `next` | — |
-| Run another skill (`tdd`, `branch-review`) | Skill tool | read that skill's `SKILL.md` and follow it | the same |
-| Ask the user | ask tool (`AskUserQuestion`) | ask in the reply and end the turn; the answer arrives as the next user message | the same |
-| Run a long shell command and wait | shell call with `run_in_background`, then end the turn: its notification wakes you; under T3 Code, once the shell call's result is back, `t3_background_wait` in a later message with the task id read from that result, then end the turn | the harness's long command (Codex: `exec_command`, then `write_stdin` with empty input until it exits; one poll lasts at most 5 minutes) | Codex as in the previous column |
-| Wait for a PR's checks | `gh pr checks <number> --watch`, run as a long shell command; under T3 Code as in the next column | no `gh --watch`: `link_pull_request`, `watch_pull_request`, end the turn; the wake resumes the step that waited: read `gh pr checks <number>`, end the turn again while they run, then `unwatch_pull_request` before going on | `gh pr checks <number> --watch` |
+| Opus subagent (at set effort) | `Agent` tool (`model: "opus"`, `effort`) | `delegate_task` (`claude`, `claude-opus-5-5`, `effort` in `target.options`); follow `next` | Unsupported: stop at preflight |
+| GPT-6.2 Sol peer | Under T3: `delegate_task` (`codex`, `gpt-6.2-sol`, `reasoningEffort: "high"`, `mode: "async"`). Outside T3: `peer.ts` | `delegate_task` (`codex`, `gpt-6.2-sol`, `reasoningEffort: "high"`, `mode: "async"`); follow `next` | `bun ~/.agents/skills/review-round/peer.ts` |
+| Resume a subagent | `SendMessage` | Follow delegate's `next` | — |
+| Run another skill | `Skill` tool | Read that skill's `SKILL.md` and follow it | Same |
+| Ask the user | `AskUserQuestion` | Ask in reply and end turn | Same |
+| Long shell wait | `run_in_background`, end turn (under T3, follow with `t3_background_wait` once task id returns, then end turn) | `exec_command`, then `write_stdin` (empty, ≤ 5 min polls) until exit | Same |
+| Wait for PR checks | `gh pr checks <N> --watch` (under T3: use next column) | `link_pull_request`, `watch_pull_request`, end turn; on wake check `gh pr checks <N>`, end turn while running, `unwatch_pull_request` when done | `gh pr checks <N> --watch` |
 
-A wait is one background task and its own completion signal: the notification in Claude Code, the command's exit in
-the `write_stdin` output in Codex. A `sleep` or `until` polling loop, or a second background task started only to wait
-on the first, adds nothing but a turn that ends early.
-
-A skill's `model` and `effort` frontmatter applies only in Claude Code, so these skills set every model at the call
-instead.
+Use one background wait and its own completion signal—never a `sleep`/`until` polling loop or a second watcher task.
