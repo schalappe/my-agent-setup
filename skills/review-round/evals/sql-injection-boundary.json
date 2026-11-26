@@ -1,0 +1,14 @@
+{
+  "id": "sql-injection-boundary",
+  "kind": "must_catch",
+  "reviewer": "security",
+  "intent": "Add a user search endpoint: GET /users/search?name=<text> returns matching users' id and email.",
+  "files": {
+    "src/routes/users.ts": "diff --git a/src/routes/users.ts b/src/routes/users.ts\n--- a/src/routes/users.ts\n+++ b/src/routes/users.ts\n@@ -11,4 +11,10 @@ const router = Router();\n+router.get(\"/users/search\", requireAuth, async (req, res) => {\n+  const name = String(req.query.name ?? \"\");\n+  const result = await db.query(`SELECT id, email FROM users WHERE name LIKE '%${name}%'`);\n+  res.json(result.rows);\n+});\n+\n router.get(\"/users/:id\", requireAuth, async (req, res) => {\n   const user = await db.query(\"SELECT id, email FROM users WHERE id = $1\", [req.params.id]);\n   res.json(user.rows[0] ?? null);\n });\n"
+  },
+  "expect": {
+    "file": "src/routes/users.ts",
+    "min_severity": "major",
+    "match": "sql|inject"
+  }
+}

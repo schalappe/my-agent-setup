@@ -22,7 +22,7 @@ Build one diff command (`git diff <fixed-point>...HEAD`) excluding generated fil
 ### 2. Identify spec and standards sources
 
 - **Spec** (first match): issue refs in commit messages → user-given path → matching file under `docs/`, `specs/`, or `.scratch/` → ask user (if none, skip the Spec axis).
-- **Standards**: every repo file documenting coding standards (`CODING_STANDARDS.md`, `CONTRIBUTING.md`, etc.) plus [smells.md](smells.md). Documented repo standards always override baseline smells; baseline smells are labelled judgement calls, never hard violations; skip anything tooling enforces.
+- **Standards**: every repo file documenting coding standards (`CODING_STANDARDS.md`, `CONTRIBUTING.md`, `REVIEW.md`, etc.) plus [smells.md](smells.md). Documented repo standards always override baseline smells; baseline smells are labelled judgement calls, never hard violations; skip anything tooling enforces.
 
 ### 3. Spawn the axes in parallel
 

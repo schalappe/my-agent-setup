@@ -1,0 +1,15 @@
+{
+  "id": "clean-refactor-with-guide",
+  "kind": "must_stay_clean",
+  "reviewer": "correctness",
+  "intent": "Refactor: extract the duplicated cents-to-euros formatting into one helper. No behavior change.",
+  "review_guide": "Money is an integer number of cents everywhere in this repo; dividing by 100 and calling toFixed(2) is the house format.\nA pure extraction refactor needs no new test when the callers' existing tests (test/invoice.test.ts, test/receipt.test.ts) cover the moved code.",
+  "files": {
+    "src/format/money.ts": "diff --git a/src/format/money.ts b/src/format/money.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/format/money.ts\n@@ -0,0 +1,2 @@\n+// Integer cents to the house display format: 1234 -> \"12.34 EUR\".\n+export const formatCents = (cents: number): string => `${(cents / 100).toFixed(2)} EUR`;\n",
+    "src/invoice.ts": "diff --git a/src/invoice.ts b/src/invoice.ts\n--- a/src/invoice.ts\n+++ b/src/invoice.ts\n@@ -1,3 +1,5 @@\n+import { formatCents } from \"./format/money\";\n+\n export type Invoice = { id: string; lines: { cents: number }[] };\n \n export const totalCents = (invoice: Invoice): number => invoice.lines.reduce((sum, line) => sum + line.cents, 0);\n@@ -4,3 +6,3 @@ export const totalCents = (invoice: Invoice): number => invoice.lines.reduce((s\n \n export const invoiceTotal = (invoice: Invoice): string =>\n-  `${(totalCents(invoice) / 100).toFixed(2)} EUR`;\n+  formatCents(totalCents(invoice));\n",
+    "src/receipt.ts": "diff --git a/src/receipt.ts b/src/receipt.ts\n--- a/src/receipt.ts\n+++ b/src/receipt.ts\n@@ -1,4 +1,5 @@\n+import { formatCents } from \"./format/money\";\n import { type Invoice, totalCents } from \"./invoice\";\n \n export const receiptLine = (invoice: Invoice): string =>\n-  `Paid ${(totalCents(invoice) / 100).toFixed(2)} EUR for ${invoice.id}`;\n+  `Paid ${formatCents(totalCents(invoice))} for ${invoice.id}`;\n"
+  },
+  "expect": {
+    "match": "dedicated.*test|unit.*test|missing.*test|add.*test|new test|no test"
+  }
+}

@@ -110,7 +110,7 @@ On OpenAI `cyber_policy` abort, follow [harness.md](harness.md#codex-cyber_polic
 
 Confirm `bun $gate tree` equals `verify-N.json`'s `tree` (else redo step 1).
 
-Run `slices=$(bun $gate slice $N)`. It writes correctness (`review-S.prompt`) and security (`review-sec-S.prompt`) prompts and `slice-S.patch` bundles—full diff on the first reviewed round, only files changed since the previous reviewed round (plus rejected-finding files) on re-reviews. Empty output → nothing changed, go to step 4.
+Run `slices=$(bun $gate slice $N)`. It writes correctness (`review-S.prompt`) and security (`review-sec-S.prompt`) prompts and `slice-S.patch` bundles—full diff on the first reviewed round, only files changed since the previous reviewed round (plus rejected-finding files) on re-reviews. A non-empty `REVIEW.md` at the repo root (the repo's own review rules) is injected into every prompt as `<review_guide>`, read from the merge-base so a PR cannot weaken its own review rules (a symlinked `REVIEW.md` is ignored). Empty output → nothing changed, go to step 4.
 
 Run up to 8 GPT-6.2 Sol peers in parallel (fresh context, read-only), then `bun $gate reviewed $N`:
 - **Under T3 Code**: `delegate_task` per slice `S`, instructing it to read `$p/review-$S.prompt` in `$wt` (read-only), print `$p/slice-<letter>.patch` with one `cat`, reply ONLY with JSON matching `~/.agents/skills/review-round/reviewer-schema.json`, and open no other skills. When done, paginate `t3_thread_read(threadId, view: "activity", afterPosition: -1, limit: 100, maxCharsPerItem: 20000)` to `$p/review-$S.jsonl` (one page per line), then run `bun $gate reviewed $N`. If activity pages are too large or truncated, run reviewers with the `peer.ts --trace "$p/review-$S.jsonl"` command below instead (writes directly to disk with zero tokens in conductor context); never read T3's internal SQLite database.
@@ -161,4 +161,6 @@ Then print `$dir/pre-existing.md` (if present): keep `tracked: #<N>` links as-is
 
 ## Measure noise
 
-`bun ~/.agents/skills/review-round/noise.ts <repo>...` reports per-loop rounds, majors, rejection rates/reasons, pre-existing counts, and verify minutes. High rejection share → tune `REVIEW_TASK` in `gate.ts`.
+`bun ~/.agents/skills/review-round/noise.ts <repo>...` reports per-loop rounds, majors, rejection rates/reasons, pre-existing counts, and verify minutes. High rejection share → tune `REVIEW_TASK` in `gate.ts`. Repeated rejection reasons or an overgrown `REVIEW.md` feed `/retro`, which updates and prunes `REVIEW.md` and `AGENTS.md`.
+
+Before and after a prompt change, `bun ~/.agents/skills/review-round/eval.ts [case-id...]` runs the real reviewer prompts live on GPT-6.2 Sol against the known-answer cases in `evals/` (defects that must be caught, clean diffs that must stay clean) and prints `must_catch` recall and `must_stay_clean` clean rate. Exit 1 = a regression. `eval.ts --dry-run` only validates the cases and builds their prompts; it calls no model and measures nothing.

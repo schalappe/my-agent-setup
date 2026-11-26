@@ -13,7 +13,7 @@ Agents load AGENTS.md into every session in its repository. Every line costs con
 2. Every path exists and every command runs as written from the stated directory.
 3. Commands are fenced, copy-pasteable, and annotated with their purpose. Include the single-test command. Most files miss it, and agents need it most.
 4. Each "don't" names the trap and the correct action: "Do not edit `dist/`; run `bun run build`." Record a negative rule only when it traces to a real failure, a history entry, or a stated maintainer policy.
-5. Link deeper docs instead of copying them. Move workflows that run rarely (release, migration, security review) into a skill or doc and leave a one-line pointer.
+5. Link deeper docs instead of copying them. Move workflows that run rarely (release, migration, security review) into a skill or doc and leave a one-line pointer. Reviewer-only and anti-noise rules belong in root `REVIEW.md`, maintained by `retro`, not here.
 6. Subsystem rules go into the nearest nested AGENTS.md. The root keeps only rules that apply repo-wide. Nested files follow the same rules.
 7. Target under two pages (about 1,000 words). Hard cap is 500 lines. Size follows the repo: a small library may need 30 lines.
 8. No placeholders standing in for unknown content, sample paths, or template leftovers such as `<install command>` or an unused `src/`. Pattern variables inside a real path or CLI signature (`skills/<name>/SKILL.md`) are fine.

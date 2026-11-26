@@ -79,7 +79,8 @@
 // slice in one call; a whole `cat` of its exact absolute path whose output holds every one of those headers counts as a
 // read of every file of the slice. A non-empty
 // decisions.md (the defaults a run built on while its owner was away, and the findings deferred to the owner) goes into
-// every prompt as <recorded_decisions>. The task texts live here so
+// every prompt as <recorded_decisions>, and a non-empty REVIEW.md at the repo root (the repo's own review rules) as
+// <review_guide>, read from the merge-base so a pull request cannot weaken its own review rules. The task texts live here (eval.ts builds its prompts from them too) so
 // the prompts are the same every round. The first reviewed round covers every file; later ones re-review
 // only the files changed since the previous reviewed round plus the files of its rejected findings, so the loop
 // converges on its own fixes instead of digging up older code. Every prompt lists the findings earlier rounds rejected
@@ -137,7 +138,7 @@ type Scenario = Carry & { name: string; result: "pass" | "fail" | "blocked"; sur
 type Verify = { head: string; tree: string; checks: Check[]; scenarios: Scenario[]; reused_from?: number };
 export type ExecRecord = { command: string; cwd: string; head: string; tree?: string; base?: boolean; pid: number; exit?: number; seconds?: number; log: string };
 type Numbered = { k: number; record: ExecRecord };
-type ReviewFinding = { severity: string; file: string; line: number; title: string; why: string; fix: string; trigger: string; pre_existing: boolean };
+export type ReviewFinding = { severity: string; file: string; line: number; title: string; why: string; fix: string; trigger: string; pre_existing: boolean };
 type Rejection = { file: string; line?: number; title: string; reason: string };
 type Fix = { fixed: string[]; rejected: Rejection[] };
 type RecordedFindings = { findings: number; majors: unknown[]; minor: unknown[]; pre_existing: unknown[] };
@@ -162,9 +163,11 @@ const DIFF_GROWTH_RATIO = 0.5;
 const WAIT_MINUTES = 9;
 
 // Rules every reviewer prompt shares: finding fields, re-review scope, earlier judgments, and severity.
-const FINDING_RULES = `For each finding, \`trigger\` names the input or state that makes it fail. Set \`pre_existing\` to true when the faulty code is not added or changed by the patch: the pull request did not introduce it, so it is recorded for the owner and never blocks this PR. When a defect is one instance of a pattern, report the pattern once, at its first instance, and list every other instance you find in \`why\`, so all of them get fixed in one round.
+export const FINDING_RULES = `For each finding, \`trigger\` names the input or state that makes it fail. Set \`pre_existing\` to true when the faulty code is not added or changed by the patch: the pull request did not introduce it, so it is recorded for the owner and never blocks this PR. When a defect is one instance of a pattern, report the pattern once, at its first instance, and list every other instance you find in \`why\`, so all of them get fixed in one round.
 
 <recorded_decisions>, when present, lists the decisions this run recorded for its owner, who has not reviewed them yet: product questions it built on a recommended default, and findings it deferred to the owner. They are open, not adopted, but already on the owner's list. Do not report a behavior that follows one of them, or the deferred finding itself, unless it breaks a hard invariant (data loss, a security hole, a crash, a broken contract), citing the code that proves it.
+
+<review_guide>, when present, holds the repository's own review rules (what failure looks like here, paths or patterns to skip, local anti-noise rules): apply it to your slice.
 
 <scope> says whether this is a full review or a re-review. On a re-review, the files outside your slice were reviewed in an earlier round and have not changed since: open them only to check how your slice affects them. <already_judged> lists findings earlier rounds rejected (with the reason) or recorded as pre-existing. Do not report them again unless you can show the reason is wrong, citing the code that proves it. <generated> lists the generated files of the diff: they are outside every slice; open one only as context for your slice.
 
@@ -174,7 +177,7 @@ Severity: critical = data loss, security, or crash on the main path; major = inc
 // not a read, and reviewers skipped large test patches that way, which no rerun changed.
 const OPEN_RULE = `Print every patch of <slice> in full, test files included, and open surrounding source when needed. Its first line names the slice bundle: \`cat <bundle path>\`, with the absolute path exactly as listed and its output neither piped nor redirected, prints every patch of the slice in one call, each under an \`=== PATCH: <path> ===\` header. \`cat\` with each patch path, or a glob of them, also counts. Write the path in the command itself: the gate rejects a review whose trace leaves one patch unprinted, and it does not count a search (\`rg\`, \`grep\`), a count (\`wc\`), or a loop that reads a shell variable (\`for f in …; do cat "$f"\`).`;
 
-const REVIEW_TASK = `Review your slice of this pull request diff against its stated intent. ${OPEN_RULE} Report only defects you can point to in those patches: wrong logic, contract violations against the intent, missing error handling at trust boundaries, data loss, missing or incorrect tests for changed behavior. Security has its own reviewer. If the repository's AGENTS.md names a review checklist, apply its rules to your slice. Do not report style, naming, formatting, or hypothetical future needs. Zero findings is a valid result.
+export const REVIEW_TASK = `Review your slice of this pull request diff against its stated intent. ${OPEN_RULE} Report only defects you can point to in those patches: wrong logic, contract violations against the intent, missing error handling at trust boundaries, data loss, missing or incorrect tests for changed behavior. Security has its own reviewer. If the repository's AGENTS.md names a review checklist, apply its rules to your slice. Do not report style, naming, formatting, or hypothetical future needs. Zero findings is a valid result.
 
 Also interrogate: a state-changing operation that breaks when it runs twice or after a crash halfway; a guard, retry, cast, or fallback that hides a broken invariant instead of fixing its cause; a check that reads a proxy (cache, mtime, self-report) instead of the real value. For a possible null or bad input, trace the caller before reporting it.
 
@@ -213,6 +216,40 @@ ${checks.join("\n")}
 A security defect reachable from a trust boundary is critical.
 
 ${FINDING_RULES}`;
+}
+
+// The repo's REVIEW.md as a prompt block; "" when it holds only whitespace, so an empty file adds no rule.
+export function formatReviewGuide(content: string): string {
+  const guide = content.trim();
+  return guide ? `<review_guide>\n${guide}\n</review_guide>\n` : "";
+}
+
+// REVIEW.md as committed at baseRef (the round's merge-base), never the PR working tree: a PR branch could otherwise
+// rewrite its own review rules or plant a symlink to any file. Only a regular blob counts; a symlink (120000) adds no rule.
+export async function readReviewGuide(root: string, baseRef: string): Promise<string> {
+  const entry = (await $`git ls-tree ${baseRef} -- REVIEW.md`.cwd(root).text()).trim();
+  const [mode, type, oid] = entry.split(/\s+/);
+  if (type !== "blob" || (mode !== "100644" && mode !== "100755")) return "";
+  return formatReviewGuide(await $`git cat-file -p ${oid}`.cwd(root).text());
+}
+
+export type ReviewContext = {
+  intent: string;
+  reviewGuide?: string; // formatted block from formatReviewGuide
+  decisions?: string; // raw decisions.md
+  checks: string;
+  scope: string;
+  judged: string;
+  files: string;
+  generated: string;
+  slice: string;
+};
+
+// One prompt layout for `slice` and eval.ts, so an eval measures the prompt the loop really sends.
+export function buildReviewPrompt(task: string, context: ReviewContext): string {
+  const decisions = context.decisions?.trim();
+  const recorded = decisions ? `<recorded_decisions>\n${decisions}\n</recorded_decisions>\n` : "";
+  return `${task}\n\n<intent>\n${context.intent}\n</intent>\n${context.reviewGuide ?? ""}${recorded}<checks_passed>\n${context.checks}\n</checks_passed>\n<scope>\n${context.scope}\n</scope>\n<already_judged>\n${context.judged || "none"}\n</already_judged>\n<files>\n${context.files.trim()}\n</files>\n<generated>\n${context.generated || "none"}\n</generated>\n<slice>\n${context.slice}\n</slice>\n`;
 }
 
 const toplevel = async (cwd = process.cwd()): Promise<string> => (await $`git rev-parse --show-toplevel`.cwd(cwd).text()).trim();
@@ -308,7 +345,7 @@ function describeOutcome({ result, reason, known }: Outcome): string {
 const pathOf = (numstatLine: string): string => numstatLine.split("\t").slice(2).join("\t");
 // One patch file per changed path. `%` and `_` are escaped before `/` becomes `__`, so no two paths share a name:
 // `a/b.txt` is a__b.txt.patch and `a__b.txt` is a%5F%5Fb.txt.patch.
-const patchPath = (roundDir: string, path: string): string =>
+export const patchPath = (roundDir: string, path: string): string =>
   `${roundDir}/patches/${path.replaceAll("%", "%25").replaceAll("_", "%5F").replaceAll("/", "__")}.patch`;
 // The patch a round holds for `path`. A round prepared before the escaped names holds `/`→`__` names: they are read as
 // they are, so a loop started then keeps its recorded reviews.
@@ -531,7 +568,8 @@ async function slice(round: string): Promise<string[]> {
   const kept = await reReviewPaths(previous, verify.tree);
   const files = await Bun.file(`${roundDir}/files.txt`).text();
   const scopedLines = files.split("\n").filter((line) => pathOf(line) && (!kept || kept.has(pathOf(line))));
-  const generated = await generatedPaths(await toplevel(), scopedLines.map(pathOf));
+  const root = await toplevel();
+  const generated = await generatedPaths(root, scopedLines.map(pathOf));
   const reviewed = scopedLines.filter((line) => !generated.has(pathOf(line))).join("\n");
   const scope = kept
     ? `Re-review: only files changed since ${previous?.name.slice(0, -".json".length)} or named by its rejected findings are in the slices.`
@@ -540,8 +578,10 @@ async function slice(round: string): Promise<string[]> {
   const generatedList = [...generated].map((path) => `- ${path}: generated, not reviewed (${roundPatch(roundDir, path)})`).join("\n");
   const intent = (await $`gh pr view --json body --jq .body`.text()).trim();
   const decisionsFile = `${dir}/decisions.md`;
-  const decisions = existsSync(decisionsFile) ? readFileSync(decisionsFile, "utf8").trim() : "";
-  const recorded = decisions ? `<recorded_decisions>\n${decisions}\n</recorded_decisions>\n` : "";
+  const decisions = existsSync(decisionsFile) ? readFileSync(decisionsFile, "utf8") : "";
+  const baseFile = Bun.file(`${roundDir}/base`);
+  if (!(await baseFile.exists())) throw new Error(`${roundDir}/base: missing; gate.ts prepare ${round} writes it`);
+  const reviewGuide = await readReviewGuide(root, (await baseFile.text()).trim());
   const checks = [
     ...verify.checks.map((check) => `- ${check.command}: exit ${check.exit}${known.includes(check.command) ? " (fails on the base too)" : ""}`),
     ...verify.scenarios.map((scenario) => `- ${scenario.name}: ${scenario.result}`),
@@ -559,9 +599,9 @@ async function slice(round: string): Promise<string[]> {
     }
     await Bun.write(bundlePath(roundDir, name), bundle.join("\n"));
     const sliceList = [`bundle: ${bundlePath(roundDir, name)} (every patch below, in one file)`, ...patches].join("\n");
-    const context = `<intent>\n${intent}\n</intent>\n${recorded}<checks_passed>\n${checks}\n</checks_passed>\n<scope>\n${scope}\n</scope>\n<already_judged>\n${judged || "none"}\n</already_judged>\n<files>\n${files.trim()}\n</files>\n<generated>\n${generatedList || "none"}\n</generated>\n<slice>\n${sliceList}\n</slice>\n`;
-    await Bun.write(`${roundDir}/review-${name}.prompt`, `${REVIEW_TASK}\n\n${context}`);
-    await Bun.write(`${roundDir}/review-sec-${name}.prompt`, `${security}\n\n${context}`);
+    const context = { intent, reviewGuide, decisions, checks, scope, judged, files, generated: generatedList, slice: sliceList };
+    await Bun.write(`${roundDir}/review-${name}.prompt`, buildReviewPrompt(REVIEW_TASK, context));
+    await Bun.write(`${roundDir}/review-sec-${name}.prompt`, buildReviewPrompt(security, context));
     await Bun.write(`${roundDir}/slice-${name}.txt`, `${paths.join("\n")}\n`);
     names.push(name, `sec-${name}`);
   }
@@ -572,11 +612,11 @@ async function slice(round: string): Promise<string[]> {
 
 type ReviewCheck = { name: string; problem?: string; summary: string };
 
-const SEVERITIES = ["critical", "major", "minor", "nit"];
+export const SEVERITIES = ["critical", "major", "minor", "nit"];
 
 // The shape reviewer-schema.json asks for. Both engines enforce the schema, but the answer is still model output, so
 // the gate checks it here before it records a finding.
-function isFinding(value: unknown): value is ReviewFinding {
+export function isFinding(value: unknown): value is ReviewFinding {
   return (
     isObject(value) &&
     SEVERITIES.includes(value.severity as string) &&

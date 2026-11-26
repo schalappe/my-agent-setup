@@ -8,7 +8,10 @@
 // before that field existed), and includes the archived attempts of each round, so a rerun's time shows. It prints `-`
 // when no verify file records seconds.
 // Rounds recorded before a field existed count that field as empty.
+// It also prints each repo's root REVIEW.md line count (a symlink or missing file prints nothing), flagging one over
+// the 60-line cap that /retro keeps it within.
 
+import { lstatSync, statSync } from "node:fs";
 import { dirname, relative } from "node:path";
 import { $ } from "bun";
 
@@ -28,6 +31,7 @@ const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : [
 async function loops(repo: string): Promise<Loop[]> {
   const reviewDir = `${(await $`git -C ${repo} rev-parse --path-format=absolute --git-common-dir`.text()).trim()}/review`;
   const byLoop = new Map<string, string[]>();
+  if (!statSync(reviewDir, { throwIfNoEntry: false })?.isDirectory()) return []; // no review-round loop ran here yet
   for (const path of new Bun.Glob("**/round-*.json").scanSync({ cwd: reviewDir, dot: true }))
     byLoop.set(dirname(path), [...(byLoop.get(dirname(path)) ?? []), path]);
 
@@ -93,3 +97,15 @@ const converged = all.filter((loop) => loop.status === "converged");
 const meanRounds = converged.length ? (converged.reduce((sum, loop) => sum + loop.rounds, 0) / converged.length).toFixed(2) : "-";
 console.log(`\ntotal: ${all.length} loops, ${majors} critical/major, ${rejected.length} rejected (${share(rejected.length, majors)}), mean rounds to converge ${meanRounds}`);
 if (rejected.length) console.log(`rejection reasons:\n${rejected.map((reason) => `- ${reason}`).join("\n")}`);
+
+const REVIEW_MD_CAP = 60;
+for (const repo of repos) {
+  const root = (await $`git -C ${repo} rev-parse --show-toplevel`.text()).trim();
+  const path = `${root}/REVIEW.md`;
+  // lstat so a symlinked REVIEW.md is skipped, not followed; a missing file is the common case, not an error.
+  if (!lstatSync(path, { throwIfNoEntry: false })?.isFile()) continue;
+  const text = await Bun.file(path).text();
+  const lines = text.length === 0 ? 0 : text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
+  const over = lines > REVIEW_MD_CAP ? ` (over ${REVIEW_MD_CAP}-line cap; run /retro to prune)` : "";
+  console.log(`${relative(process.cwd(), repo) || "."}: REVIEW.md ${lines} lines${over}`);
+}

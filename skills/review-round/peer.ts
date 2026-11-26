@@ -57,12 +57,12 @@ function command(access: Access, schemaPath?: string): string[] {
   ];
 }
 
-// One run from the current directory; the raw trace goes to traceFile.
-export async function runPeer(access: Access, prompt: string, traceFile: string, schemaPath?: string): Promise<{ exit: number; trace: Trace }> {
+// One run from cwd (default: the current directory); the raw trace goes to traceFile.
+export async function runPeer(access: Access, prompt: string, traceFile: string, schemaPath?: string, cwd?: string): Promise<{ exit: number; trace: Trace }> {
   // A Bun.file stdout writes from the start without truncating, so a rerun would leave the tail of the previous
   // run's trace behind, and its reads and answer would count as this run's.
   await rm(traceFile, { force: true });
-  const child = Bun.spawn(command(access, schemaPath), { stdin: new Blob([prompt]), stdout: Bun.file(traceFile), stderr: "inherit" });
+  const child = Bun.spawn(command(access, schemaPath), { cwd, stdin: new Blob([prompt]), stdout: Bun.file(traceFile), stderr: "inherit" });
   const exit = await child.exited;
   return { exit, trace: readTrace(await Bun.file(traceFile).text()) };
 }
