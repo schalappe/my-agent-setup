@@ -39,5 +39,6 @@ Long `gpt-6.2-sol` runs can terminate mid-turn with `codex_error_info: "cyber_po
 | Ask the user | `AskUserQuestion` | Ask in reply and end turn | Same |
 | Long shell wait | `run_in_background`, end turn (under T3, follow with `t3_background_wait` once task id returns, then end turn) | `exec_command`, then `write_stdin` (empty, ≤ 5 min polls) until exit | Same |
 | Wait for PR checks | `gh pr checks <N> --watch` (under T3: use next column) | `link_pull_request`, `watch_pull_request`, end turn; on wake check `gh pr checks <N>`, end turn while running, `unwatch_pull_request` when done | `gh pr checks <N> --watch` |
+| Squash-merge PR | `gh pr merge <N> --squash --match-head-commit "$head"` (`--delete-branch` if `wt` removed, else `git push origin --delete <branch>`) (under T3: use next column) | `pull_request_merge` with `method: "squash"` and `expectedHeadSha: "$head"` (always set `method: "squash"`, including for stacked PRs; delete remote branch if still present) | `gh pr merge <N> --squash --match-head-commit "$head"` (`--delete-branch` if `wt` removed, else `git push origin --delete <branch>`) |
 
 Use one background wait and its own completion signal—never a `sleep`/`until` polling loop or a second watcher task.

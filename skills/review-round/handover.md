@@ -9,16 +9,16 @@ Final phase of [review-round](SKILL.md) (`wt`, `dir`, `gate`, `End` as set there
 2. **PR description**: if any `round-*.json` has a non-null `commit`, run the `pr` skill on the current body to fix stale claims, apply with `gh pr edit <number> --body-file`, and report what changed.
 3. [Release the stack](SKILL.md#release-the-stack), print [decisions](SKILL.md#decisions), and repeat the last `Round N:` line verbatim in a code span.
 4. **Act on `$dir/end`**:
-   - `ask` → one grouped multiple-choice question (only applicable options): Merge (squash-merge on green CI, delete branch, fast-forward main checkout; recommended if no open decision); File drafted pre-existing issues (repo category label + `needs-triage`); Remove worktree `<wt>` (only if `$dir/worktree-created` is `existing`); None.
+   - `ask` → one grouped multiple-choice question (only applicable options): Squash-merge (on green CI, delete branch, fast-forward main checkout; recommended if no open decision); File drafted pre-existing issues (repo category label + `needs-triage`); Remove worktree `<wt>` (only if `$dir/worktree-created` is `existing`); None.
    - `stop` → [Land](#land) up to merge; keep the worktree.
-   - `send` → if `$dir/decisions.md` exists, ask as for `ask`; otherwise choose Merge automatically, filing any untracked `known failure on base` in `$dir/pre-existing.md` (repo category label + `needs-triage`) while leaving other pre-existing findings drafted.
-5. If Merge chosen → [Land](#land).
+   - `send` → if `$dir/decisions.md` exists, ask as for `ask`; otherwise choose Squash-merge automatically, filing any untracked `known failure on base` in `$dir/pre-existing.md` (repo category label + `needs-triage`) while leaving other pre-existing findings drafted.
+5. If Squash-merge chosen → [Land](#land).
 6. If filing chosen → `gh issue create`.
-7. Run [Worktree](#worktree) if Merge didn't already and `End != stop`.
+7. Run [Worktree](#worktree) if Squash-merge didn't already and `End != stop`.
 
 ## Land
 
-Runs for Merge and for `stop` (which exits at step 4).
+Runs for Squash-merge and for `stop` (which exits at step 4).
 
 1. **Base check**: in `wt`, `git fetch origin <base>` and list overlapping changed files:
    ```bash
@@ -29,7 +29,7 @@ Runs for Merge and for `stop` (which exits at step 4).
 2. **Checks**: wait for PR checks ([harness.md](harness.md#harness-operations)); on failure → [CI red](#ci-red).
 3. **Base re-check**: repeat step 1's listing (base may have moved during CI); if any file overlaps, loop back to step 1.
 4. If `stop` → print `PR #<number> ready to merge: checks green on <head>` and stop.
-5. **Merge**: capture `head=$(git -C "$wt" rev-parse HEAD)`, then run [Worktree](#worktree). From main checkout: `gh pr merge <number> --squash --delete-branch --match-head-commit "$head"` if `wt` was removed, else omit `--delete-branch` and run `git push origin --delete <branch>`. Fast-forward main checkout (`git pull --ff-only`) if it is on the base branch.
+5. **Squash-merge**: always squash-merge, including every PR in a stack (never a merge commit or rebase merge, even if a repo stack doc suggests merge commits). Capture `head=$(git -C "$wt" rev-parse HEAD)`, run [Worktree](#worktree), then squash-merge from main checkout per [harness.md](harness.md#harness-operations). Fast-forward main checkout (`git pull --ff-only`) if it is on the base branch.
 6. Comment what changed and how it was verified (last verify line, checks, scenarios) on each closed issue (`gh pr view <number> --json closingIssuesReferences`).
 
 ## CI red

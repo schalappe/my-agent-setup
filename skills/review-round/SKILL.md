@@ -8,7 +8,7 @@ argument-hint: "[#PR] [max rounds, default 5] [send|stop]"
 
 Verify → review → fix rounds on a PR (e.g. `/review-round #42 5`). The skill runs the loop itself—never wrap it in `/loop`.
 
-- **Args**: `#PR` (or URL; defaults to current branch's PR), bare `M` = max rounds (default `5`; a PR always takes `#`), `End` = `send` (merge when ready), `stop` (ready + green checks), or default `ask`. Only the user's invocation sets `End`.
+- **Args**: `#PR` (or URL; defaults to current branch's PR), bare `M` = max rounds (default `5`; a PR always takes `#`), `End` = `send` (squash-merge when ready), `stop` (ready + green checks), or default `ask`. Only the user's invocation sets `End`.
 - **Roles & harness**: fixed across Claude Code, Codex, and T3 Code—see [harness.md](harness.md#model-roles). Opus 5.5 writes all fixes (medium for red/minor/CI/merge, high for findings); GPT-6.2 Sol verifies, reviews (correctness + security per slice), and judges repeats; `gate.ts` computes every verdict. Stop at preflight if Opus subagents cannot run ([harness.md](harness.md#harness-operations)).
 - **Fixer contract**: every fixer brief (red, findings, minor pass) requires running the repo's fast static and mechanical checks on touched modules (per `AGENTS.md`, e.g. `gates.sh --dry-run` and `check -x test -x postgresTest -PstaticCheckModules=...`), running long checks in the foreground to completion (with exit codes), returning compiling code that passes static checks, and replying `{"fixed":[titles],"rejected":[{"file","line","title","reason"}]}` (save red/findings replies to `$p/fix.json`).
 - **State**: shared across worktrees in `dir=$(git rev-parse --path-format=absolute --git-common-dir)/review/<branch>`. Re-resolve context every round; never carry findings in memory.
