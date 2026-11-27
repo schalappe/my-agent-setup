@@ -56,8 +56,8 @@
 // Verification. A check counts only through its exec record: the verifier's own exit code is a self-report, and one
 // once read 0 while its log showed 314 failed tests. Every check of verify-N.json that is not carried needs a finished
 // exec record of the same command on the verified tree, and the latest such record holds the same exit; otherwise the
-// round is blocked. A failing check is a known failure, and does not block green, when the latest `--base` record of
-// the same command ran on the merge-base in round-N/base and failed too: the PR did not introduce it.
+// round is blocked. A failing check is a known failure, and does not block green, when every failure extracted from the
+// PR run is covered by finished failing `--base` runs on the merge-base in round-N/base (full or targeted class runs).
 // After a green round K, a later verification reruns only the checks and scenarios that the changed files reach and
 // copies the others from verify-K.json, marked `carried_from: K`. The gate accepts a carried entry only when round K
 // is green and verify-K.json holds a passing entry with the same command or scenario name. K may be 0. On the same
