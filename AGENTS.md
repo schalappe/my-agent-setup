@@ -39,7 +39,7 @@ Read the rules below as consequences of two ideas, not a checklist:
 
 ## Delegation and verification
 
-- Fixed model roles (Opus 5.5 writes all code/fixes; GPT-6.2 Sol critiques, reviews, verifies, and judges same-defect; `gate.ts` gives verdicts): `~/.agents/skills/review-round/harness.md#model-roles`. Delegate only read-only legwork to cheaper agents; money, security, and migration decisions stay with Main.
+- Fixed model roles (Opus 5.5 writes all code/fixes; GPT-6.2 Astra critiques, reviews, and judges same-defect; GPT-6.2 Sol verifies; `gate.ts` gives verdicts): `~/.agents/skills/review-round/harness.md#model-roles`. Delegate only read-only legwork to cheaper agents; money, security, and migration decisions stay with Main.
 - Main may run quick read-only checks (~30 s), focused test files, typecheck, and formatters, and launch/clean up a repo's `verify-<app>` stack. Gates, full suites, and live browser/API/container checks go to the GPT-6.2 Sol verifier once edits settle. Don't repeat its work.
 - Before a wait over ~10 minutes, state what runs, expected duration, and where progress shows.
 - Verify the real UI and backend (loading, empty, error, permission states); unit tests, mocks, and seeded data don't prove acceptance. Report unreachable states.

@@ -4,7 +4,7 @@
 // must_catch case holds a defect the reviewer has to report, a must_stay_clean case a change it must not block. A prompt
 // edit that loses recall or adds noise shows here before it costs a real loop.
 //
-// A case runs the real prompt (gate.ts REVIEW_TASK or securityTask(), through buildReviewPrompt) on GPT-6.2 Sol via
+// A case runs the real prompt (gate.ts REVIEW_TASK or securityTask(), through buildReviewPrompt) on GPT-6.2 Astra via
 // peer.ts, with its cwd set to a temp dir that holds only its patches and slice bundle, so bare repo-relative paths do
 // not land in the caller's repo. This is not a sandbox: `codex -s read-only` still lets the reviewer read paths outside it.
 // --dry-run builds every prompt without calling the peer. --list prints the cases.

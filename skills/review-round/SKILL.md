@@ -9,7 +9,7 @@ argument-hint: "[#PR] [max rounds, default 5] [send|stop]"
 Verify → review → fix rounds on a PR (e.g. `/review-round #42 5`). The skill runs the loop itself—never wrap it in `/loop`.
 
 - **Args**: `#PR` (or URL; defaults to current branch's PR), bare `M` = max rounds (default `5`; a PR always takes `#`), `End` = `send` (squash-merge when ready), `stop` (ready + green checks), or default `ask`. Only the user's invocation sets `End`.
-- **Roles & harness**: fixed across Claude Code, Codex, and T3 Code—see [harness.md](harness.md#model-roles). Opus 5.5 writes all fixes (medium for red/minor/CI/merge, high for findings); GPT-6.2 Sol verifies, reviews (correctness + security per slice), and judges repeats; `gate.ts` computes every verdict. Stop at preflight if Opus subagents cannot run ([harness.md](harness.md#harness-operations)).
+- **Roles & harness**: fixed across Claude Code, Codex, and T3 Code—see [harness.md](harness.md#model-roles). Opus 5.5 writes all fixes (medium for red/minor/CI/merge, high for findings); GPT-6.2 Sol (medium) verifies; GPT-6.2 Astra (high) reviews (correctness + security per slice) and judges repeats; `gate.ts` computes every verdict. Stop at preflight if Opus subagents cannot run ([harness.md](harness.md#harness-operations)).
 - **Fixer contract**: every fixer brief (red, findings, minor pass) requires running the repo's fast static and mechanical checks on touched modules (per `AGENTS.md`, e.g. `gates.sh --dry-run` and `check -x test -x postgresTest -PstaticCheckModules=...`), running long checks in the foreground to completion (with exit codes), returning compiling code that passes static checks, and replying `{"fixed":[titles],"rejected":[{"file","line","title","reason"}]}` (save red/findings replies to `$p/fix.json`).
 - **State**: shared across worktrees in `dir=$(git rev-parse --path-format=absolute --git-common-dir)/review/<branch>`. Re-resolve context every round; never carry findings in memory.
 - **Gate** (`gate=~/.agents/skills/review-round/gate.ts`, header documents every command): prints `converged` (latest round on current tree is green with 0 critical/major) or `stalled` (same-defect repeat, 3-round file hotspot, post-resume non-decreasing majors, or runaway diff bloat, written to `$dir/stall.json`). Never edit state files (`verify-N.json`, `round-N.json`, `status`) yourself—only the verifier writes `verify-N.json` and `gate.ts` writes the rest.
@@ -24,7 +24,7 @@ Verify → review → fix rounds on a PR (e.g. `/review-round #42 5`). The skill
   - Otherwise create `wt` at the repo `AGENTS.md` worktree path (else `<main-checkout>.worktrees/<branch>`): `git fetch origin "$branch"`, then `git worktree add "$wt" "$branch" && git -C "$wt" merge --ff-only origin/"$branch"` (or `--track -b "$branch" origin/"$branch"` if no local branch). Stop if fast-forward fails.
   - Record origin: `mkdir -p "$dir"`, write `created` to `$dir/worktree-created` if created here, else `[ -f "$dir/worktree-created" ] || echo existing > "$dir/worktree-created"`.
   - Run the repo's frozen install (for git hooks) and fresh-checkout bootstrap (codegen, local env files per `AGENTS.md`) in `wt`.
-- **End & tools**: `echo <ask|stop|send> > "$dir/end"`. Check `command -v bun`, `bun ~/.agents/skills/review-round/peer.ts --check`, `orchestrator_capabilities` under T3 (`codex` / `gpt-6.2-sol`), and Opus subagent route. Under T3 Code, call `link_pull_request`.
+- **End & tools**: `echo <ask|stop|send> > "$dir/end"`. Check `command -v bun`, `bun ~/.agents/skills/review-round/peer.ts --check`, `orchestrator_capabilities` under T3 (`codex` / `gpt-6.2-astra` and `gpt-6.2-sol`), and Opus subagent route. Under T3 Code, call `link_pull_request`.
 
 From here on, start every shell call with `cd "$wt" &&` and set `peer`, `gate`, `dir`, `N`, `p`. Pass absolute paths under `wt` to all file tools and subagents.
 
@@ -95,12 +95,12 @@ Before any same-round rerun, archive with `bun $gate attempt $N` and regenerate 
 ### Verifier
 
 Run the GPT-6.2 Sol peer ([harness.md](harness.md#model-roles)) with `$p/verify.brief`:
-- **Under T3 Code**: `delegate_task` (`codex`, `gpt-6.2-sol`, `reasoningEffort: "high"`, `mode: "async"`, follow `next`), explicitly stating it is authorized by the user via `/implement` or `/review-round` to verify our own app on a local disposable stack. Instruct it to read `~/.agents/skills/review-round/verifier.md` and `$p/verify.brief` (absolute paths), work only in `$wt`, run checks via `bun $gate exec $N -- '<command>'`, write `verify-$N.json`, and not open `review-round/SKILL.md` or unlisted skills.
+- **Under T3 Code**: `delegate_task` (`codex`, `gpt-6.2-sol`, `reasoningEffort: "medium"`, `mode: "async"`, follow `next`), explicitly stating it is authorized by the user via `/implement` or `/review-round` to verify our own app on a local disposable stack. Instruct it to read `~/.agents/skills/review-round/verifier.md` and `$p/verify.brief` (absolute paths), work only in `$wt`, run checks via `bun $gate exec $N -- '<command>'`, write `verify-$N.json`, and not open `review-round/SKILL.md` or unlisted skills.
 - **Outside T3 Code**:
   ```bash
   cd "$wt"
   cat ~/.agents/skills/review-round/verifier.md "$p/verify.brief" \
-    | bun $peer --access full --trace "$p/verify.jsonl" 2> "$p/verify.log" > "$p/verify.out.json"
+    | bun $peer --model gpt-6.2-sol --effort medium --access full --trace "$p/verify.jsonl" 2> "$p/verify.log" > "$p/verify.out.json"
   jq -r .result "$p/verify.out.json"
   ```
 
@@ -112,8 +112,8 @@ Confirm `bun $gate tree` equals `verify-N.json`'s `tree` (else redo step 1).
 
 Run `slices=$(bun $gate slice $N)`. It writes correctness (`review-S.prompt`) and security (`review-sec-S.prompt`) prompts and `slice-S.patch` bundles—full diff on the first reviewed round, only files changed since the previous reviewed round (plus rejected-finding files) on re-reviews. A non-empty `REVIEW.md` at the repo root (the repo's own review rules) is injected into every prompt as `<review_guide>`, read from the merge-base so a PR cannot weaken its own review rules (a symlinked `REVIEW.md` is ignored). Empty output → nothing changed, go to step 4.
 
-Run up to 8 GPT-6.2 Sol peers in parallel (fresh context, read-only), then `bun $gate reviewed $N`:
-- **Under T3 Code**: `delegate_task` per slice `S`, instructing it to read `$p/review-$S.prompt` in `$wt` (read-only), print `$p/slice-<letter>.patch` with one `cat`, reply ONLY with JSON matching `~/.agents/skills/review-round/reviewer-schema.json`, and open no other skills. When done, paginate `t3_thread_read(threadId, view: "activity", afterPosition: -1, limit: 100, maxCharsPerItem: 20000)` to `$p/review-$S.jsonl` (one page per line), then run `bun $gate reviewed $N`. If activity pages are too large or truncated, run reviewers with the `peer.ts --trace "$p/review-$S.jsonl"` command below instead (writes directly to disk with zero tokens in conductor context); never read T3's internal SQLite database.
+Run up to 8 GPT-6.2 Astra peers in parallel (fresh context, read-only), then `bun $gate reviewed $N`:
+- **Under T3 Code**: `delegate_task` (`codex`, `gpt-6.2-astra`, `reasoningEffort: "high"`, `mode: "async"`) per slice `S`, instructing it to read `$p/review-$S.prompt` in `$wt` (read-only), print `$p/slice-<letter>.patch` with one `cat`, reply ONLY with JSON matching `~/.agents/skills/review-round/reviewer-schema.json`, and open no other skills. When done, paginate `t3_thread_read(threadId, view: "activity", afterPosition: -1, limit: 100, maxCharsPerItem: 20000)` to `$p/review-$S.jsonl` (one page per line), then run `bun $gate reviewed $N`. If activity pages are too large or truncated, run reviewers with the `peer.ts --trace "$p/review-$S.jsonl"` command below instead (writes directly to disk with zero tokens in conductor context); never read T3's internal SQLite database.
 - **Outside T3 Code**:
   ```bash
   cd "$wt"
@@ -163,4 +163,4 @@ Then print `$dir/pre-existing.md` (if present): keep `tracked: #<N>` links as-is
 
 `bun ~/.agents/skills/review-round/noise.ts <repo>...` reports per-loop rounds, majors, rejection rates/reasons, pre-existing counts, and verify minutes. High rejection share → tune `REVIEW_TASK` in `gate.ts`. Repeated rejection reasons or an overgrown `REVIEW.md` feed `/retro`, which updates and prunes `REVIEW.md` and `AGENTS.md`.
 
-Before and after a prompt change, `bun ~/.agents/skills/review-round/eval.ts [case-id...]` runs the real reviewer prompts live on GPT-6.2 Sol against the known-answer cases in `evals/` (defects that must be caught, clean diffs that must stay clean) and prints `must_catch` recall and `must_stay_clean` clean rate. Exit 1 = a regression. `eval.ts --dry-run` only validates the cases and builds their prompts; it calls no model and measures nothing.
+Before and after a prompt change, `bun ~/.agents/skills/review-round/eval.ts [case-id...]` runs the real reviewer prompts live on GPT-6.2 Astra against the known-answer cases in `evals/` (defects that must be caught, clean diffs that must stay clean) and prints `must_catch` recall and `must_stay_clean` clean rate. Exit 1 = a regression. `eval.ts --dry-run` only validates the cases and builds their prompts; it calls no model and measures nothing.

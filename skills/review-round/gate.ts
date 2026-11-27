@@ -99,7 +99,7 @@
 //   failed, or the fixer rejected it and the reviewer reported it again). Only two kinds of pair can repeat: the same
 //   file (a failed fix), or an earlier finding the fixer rejected (a disagreement). The same pattern found in another
 //   file is a new instance: the loop goes on and the round cap bounds it. "Same defect" is judged by the peer,
-//   GPT-6.2 Sol through peer.ts: fixes shift lines and the reviewer rewords titles, so file/line/title matching
+//   GPT-6.2 Astra through peer.ts: fixes shift lines and the reviewer rewords titles, so file/line/title matching
 //   misses repeats. Each pair is judged once and kept in same-defect.json (its run's trace in same-defect.jsonl), so
 //   the verdict is a deterministic function of the round files and those kept judgments. The repeats behind a stall
 //   are written to stall.json and printed with the judge's reason.
@@ -1358,7 +1358,7 @@ async function resume(): Promise<{ resumed: boolean; message: string }> {
 // A pair can repeat only when it shares a file (the fix there failed) or the earlier finding was rejected (the
 // reviewer re-raised it). The same pattern in another file is a new instance, so it never stalls the loop: an
 // earlier fix that worked where it applied is progress, and the round cap bounds the rest.
-// GPT-6.2 Sol judges the candidate pairs it has not judged before, in one peer run; every judgment is kept in
+// GPT-6.2 Astra judges the candidate pairs it has not judged before, in one peer run; every judgment is kept in
 // same-defect.json, keyed by the pair's text, so the verdict over the same round files is always the same.
 export async function repeatsEarlier(dir: string, latest: Finding[], earlier: Earlier[]): Promise<Repeat[]> {
   const pairs = latest

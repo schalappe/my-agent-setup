@@ -9,12 +9,13 @@ Roles are fixed regardless of harness or who wrote the code (human included). Se
 | Role | Model | Route |
 |---|---|---|
 | Implementers, fixers, mergers | Claude Opus 5.5 | Opus subagent (table below); orchestration never edits code directly |
-| Plan critique, review, verification | GPT-6.2 Sol (`reasoningEffort: "high"`) | Under T3 Code: `delegate_task` (`providerInstanceId: "codex"`, `model: "gpt-6.2-sol"`, `mode: "async"`, follow `next`). Outside T3: `bun ~/.agents/skills/review-round/peer.ts` |
-| Same-defect judgment | GPT-6.2 Sol | Headless `peer.ts` invoked by `gate.ts` (cached in `same-defect.json`) |
+| Plan critique, cold read, review | GPT-6.2 Astra (`reasoningEffort: "high"`) | Under T3 Code: `delegate_task` (`providerInstanceId: "codex"`, `model: "gpt-6.2-astra"`, `reasoningEffort: "high"`, `mode: "async"`, follow `next`). Outside T3: `bun ~/.agents/skills/review-round/peer.ts` |
+| Verification | GPT-6.2 Sol (`reasoningEffort: "medium"`) | Under T3 Code: `delegate_task` (`providerInstanceId: "codex"`, `model: "gpt-6.2-sol"`, `reasoningEffort: "medium"`, `mode: "async"`, follow `next`). Outside T3: `bun ~/.agents/skills/review-round/peer.ts --model gpt-6.2-sol --effort medium` |
+| Same-defect judgment | GPT-6.2 Astra (`reasoningEffort: "high"`) | Headless `peer.ts` invoked by `gate.ts` (cached in `same-defect.json`) |
 | Verdicts (`green`, `converged`, `stalled`, `ready`) | Deterministic | `gate.ts` over recorded files |
 
 - Call `orchestrator_capabilities` once per T3 thread before the first `delegate_task`. `trace.ts` parses both `t3_thread_read(view: "activity")` dumps and `peer.ts` JSONL traces.
-- **Plan critique**: write the plan/spec/tickets to a file and dispatch a read-only GPT-6.2 Sol peer asking for gaps, risks, and wrong assumptions (outside T3: `bun ~/.agents/skills/review-round/peer.ts --access read --trace <dir>/critique.jsonl < <plan>`). Resolve every objection before implementing.
+- **Plan critique**: write the plan/spec/tickets to a file and dispatch a read-only GPT-6.2 Astra peer asking for gaps, risks, and wrong assumptions (outside T3: `bun ~/.agents/skills/review-round/peer.ts --access read --trace <dir>/critique.jsonl < <plan>`). Resolve every objection before implementing.
 
 ## Codex and Antigravity sandbox
 
@@ -33,7 +34,8 @@ Long `gpt-6.2-sol` runs can terminate mid-turn with `codex_error_info: "cyber_po
 | Operation | Claude Code | Codex / Gemini under T3 Code | Codex outside T3 Code |
 |---|---|---|---|
 | Opus subagent (at set effort) | `Agent` tool (`model: "opus"`, `effort`) | `delegate_task` (`claude`, `claude-opus-5-5`, `effort` in `target.options`); follow `next` | Unsupported: stop at preflight |
-| GPT-6.2 Sol peer | Under T3: `delegate_task` (`codex`, `gpt-6.2-sol`, `reasoningEffort: "high"`, `mode: "async"`). Outside T3: `peer.ts` | `delegate_task` (`codex`, `gpt-6.2-sol`, `reasoningEffort: "high"`, `mode: "async"`); follow `next` | `bun ~/.agents/skills/review-round/peer.ts` |
+| GPT-6.2 Astra peer (review/critique) | Under T3: `delegate_task` (`codex`, `gpt-6.2-astra`, `reasoningEffort: "high"`, `mode: "async"`). Outside T3: `peer.ts` | `delegate_task` (`codex`, `gpt-6.2-astra`, `reasoningEffort: "high"`, `mode: "async"`); follow `next` | `bun ~/.agents/skills/review-round/peer.ts` |
+| GPT-6.2 Sol peer (verifier) | Under T3: `delegate_task` (`codex`, `gpt-6.2-sol`, `reasoningEffort: "medium"`, `mode: "async"`). Outside T3: `peer.ts --model gpt-6.2-sol --effort medium` | `delegate_task` (`codex`, `gpt-6.2-sol`, `reasoningEffort: "medium"`, `mode: "async"`); follow `next` | `bun ~/.agents/skills/review-round/peer.ts --model gpt-6.2-sol --effort medium` |
 | Resume a subagent | `SendMessage` | Follow delegate's `next` | — |
 | Run another skill | `Skill` tool | Read that skill's `SKILL.md` and follow it | Same |
 | Ask the user | `AskUserQuestion` | Ask in reply and end turn | Same |

@@ -3,7 +3,7 @@ name: branch-review
 description: "Use when the user wants a review of a branch, a PR, work-in-progress changes, or everything since a fixed point (\"review since X\")."
 ---
 
-Three-axis review of `git diff <fixed-point>...HEAD` through parallel GPT-6.2 Sol peers ([model roles](../review-round/harness.md#model-roles)):
+Three-axis review of `git diff <fixed-point>...HEAD` through parallel GPT-6.2 Astra peers ([model roles](../review-round/harness.md#model-roles)):
 
 - **Standards**: conformance to documented repo standards + Fowler smell baseline ([smells.md](smells.md)).
 - **Spec**: faithful implementation of the originating issue/spec (missing requirements, scope creep, wrong behavior).
@@ -15,7 +15,7 @@ If no issue tracker is configured, tell the user to run `/setup-repo`.
 
 ### 1. Pin the fixed point
 
-Use the fixed point the user gave (SHA, branch, tag, `main`, `HEAD~5`); ask if omitted. Verify `git rev-parse <fixed-point>`, non-empty diff, and the GPT-6.2 Sol peer route (`orchestrator_capabilities` under T3; `bun ~/.agents/skills/review-round/peer.ts --check` outside T3).
+Use the fixed point the user gave (SHA, branch, tag, `main`, `HEAD~5`); ask if omitted. Verify `git rev-parse <fixed-point>`, non-empty diff, and the GPT-6.2 Astra peer route (`orchestrator_capabilities` under T3; `bun ~/.agents/skills/review-round/peer.ts --check` outside T3).
 
 Build one diff command (`git diff <fixed-point>...HEAD`) excluding generated files (`git check-attr linguist-generated diff`, generated clients/specs) via `':(exclude)<path>'` and record the excluded list + `git log <fixed-point>..HEAD --oneline`. Collect gate results and evidence paths; any missing or failing required gate blocks a clean verdict.
 
@@ -33,7 +33,7 @@ Write `standards.prompt`, `spec.prompt`, and `correctness.prompt` in `d=$(mktemp
 - **Correctness**: spec path/contents (when present). Ask to check callers outside the diff (`git grep`), UI/read states (loading, empty, error, refused, forbidden), write failure paths (validation, partial success, retry, concurrency), dependency-bump changelogs/lockfiles, and condition-inversion mutations in a throwaway worktree of `HEAD` (removing it after). Zero findings is valid.
 
 Dispatch in parallel ([harness.md](../review-round/harness.md#harness-operations)):
-- **Under T3 Code**: `delegate_task` (`codex`, `gpt-6.2-sol`, `reasoningEffort: "high"`, `mode: "async"`) per axis, reading `$d/<axis>.prompt` from repo root without editing tracked files. If an axis fails or `t3_thread_read(view: "activity")` shows 0 tool calls, rerun once then report failed.
+- **Under T3 Code**: `delegate_task` (`codex`, `gpt-6.2-astra`, `reasoningEffort: "high"`, `mode: "async"`) per axis, reading `$d/<axis>.prompt` from repo root without editing tracked files. If an axis fails or `t3_thread_read(view: "activity")` shows 0 tool calls, rerun once then report failed.
 - **Outside T3 Code**:
   ```bash
   for axis in standards spec correctness; do

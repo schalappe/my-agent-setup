@@ -14,7 +14,7 @@ Main owns scope, decisions, and acceptance: read the tickets, spec, touched proj
 
 Subagents report open product/business questions instead of guessing. Main answers from tickets, docs, or conversation, asks the user when it is their call (with an `End`, see [Decisions with an End](#decisions-with-an-end)), and resumes the subagent with the answer. At the end, Main **harmonises** what was built against what was asked and decided, closing every gap until they match.
 
-Model roles and harness mapping are fixed: see [harness.md](../review-round/harness.md#model-roles) (Opus 5.5 writes/merges/fixes; GPT-6.2 Sol critiques, reviews, verifies).
+Model roles and harness mapping are fixed: see [harness.md](../review-round/harness.md#model-roles) (Opus 5.5 writes/merges/fixes; GPT-6.2 Astra critiques and reviews; GPT-6.2 Sol verifies).
 
 ### Decisions with an End
 
@@ -24,7 +24,7 @@ With `send`/`stop`, the user is away: build on your recommended default and appe
 
 1. Read the tickets/spec and build the task graph (on GitHub: `bun ~/.agents/skills/implement/plan-graph.ts <owner/repo> <issue>...`). Record `git -C <main-checkout> status --porcelain` as baseline.
 2. *(Optional)* Dispatch an exploration subagent to save shared markdown notes outside the repo for implementers.
-3. Run the [plan critique](../review-round/harness.md#model-roles) on the tickets, spec, and task graph unless GPT-6.2 Sol already reviewed this version (for a single ticket, a clean Sol cold read recorded by `/scout` on this version counts; multi-ticket specs still critique the combined spec and task graph). Resolve each objection before implementing.
+3. Run the [plan critique](../review-round/harness.md#model-roles) on the tickets, spec, and task graph unless GPT-6.2 Astra already reviewed this version (for a single ticket, a clean Astra cold read recorded by `/scout` on this version counts; multi-ticket specs still critique the combined spec and task graph). Resolve each objection before implementing.
 4. Create the worktree and branch:
    - **One ticket**: a feature branch; the implementer works on it directly.
    - **Spec shape**:
