@@ -53,4 +53,4 @@ Read the rules below as consequences of two ideas, not a checklist:
 
 ## Tools
 
-Prefer `bun` over node/npm, `uv` over pip/poetry, `gh` for GitHub, `ctx7` for library docs, and `rg`, `fd`, `sd`, `jq` in the shell. Repository scripts and lockfiles win.
+Prefer `bun` over node/npm, `uv` over pip/poetry, `gh` for GitHub, `bunx ctx7` for library docs, and `rg`, `fd`, `sd`, `jq` in the shell. Repository scripts and lockfiles win.
